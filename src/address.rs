@@ -86,6 +86,11 @@ impl<T> Address<T> {
     pub fn is_closed(&self) -> bool {
         self.channel.is_closed()
     }
+
+    /// Whether all inboxes linked to this channel have exited.
+    pub fn has_exited(&self) -> bool {
+        self.inbox_count() == 0
+    }
 }
 
 impl<T> Unpin for Address<T> {}

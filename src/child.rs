@@ -212,6 +212,11 @@ impl<T: Send + 'static> Child<T> {
     pub fn state(&self) -> &SupervisionState {
         &self.state
     }
+
+    /// Whether all inboxes linked to this channel have exited.
+    pub fn has_exited(&self) -> bool {
+        self.inbox_count() == 0
+    }
 }
 
 impl<T: Send + 'static> Drop for Child<T> {
@@ -381,6 +386,11 @@ impl<T: Send + 'static> ChildPool<T> {
     /// Get a reference to the current supervision-state
     pub fn state(&self) -> &SupervisionState {
         &self.state
+    }
+
+    /// Whether all inboxes linked to this channel have exited.
+    pub fn has_exited(&self) -> bool {
+        self.inbox_count() == 0
     }
 }
 

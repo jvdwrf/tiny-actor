@@ -1,7 +1,7 @@
 use crate::*;
 use futures::{Future, FutureExt, Stream};
 use std::{
-    any::{Any, TypeId},
+    any::{Any},
     fmt::Debug,
     mem::ManuallyDrop,
     sync::Arc,
@@ -113,7 +113,7 @@ impl<T: Send + 'static> Child<T> {
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
     pub fn into_parts(self) -> (JoinHandle<T>, SupervisionState) {
-        let (a, b, c) = self._into_parts();
+        let (_a, b, c) = self._into_parts();
         (b, c)
     }
 

@@ -1,13 +1,11 @@
-use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use el::{Event, EventListener};
 use event_listener as el;
 use std::{
     sync::{
-        atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU8, AtomicUsize, Ordering},
-        Arc, Mutex, MutexGuard,
+        atomic::{AtomicI32, AtomicUsize, Ordering},
+        Arc,
     },
-    time::Duration,
 };
 
 /// Contains all data that should be shared between addresses and inboxes.

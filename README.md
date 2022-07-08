@@ -55,7 +55,7 @@ detaching a `Child`.
 
 ## Exiting
 Exit can refer to two seperate events which, with good practise, always occur at the same time:
-* An `Inbox` can exit by being dropped. Once all `Inbox`rd of a `Channel` have been dropped, the `Channel` itself
+* An `Inbox` can exit by being dropped. Once all `Inbox`es of a `Channel` have been dropped, the `Channel` itself
 has exited. This type of exit can be retrieved/awaited from the `Channel` at any time.
 * A `tokio::task` can exit, which means the process is no longer alive. This can only be queried only once, by 
 awaiting the `Child` or `ChildPool`.

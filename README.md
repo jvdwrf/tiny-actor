@@ -2,15 +2,15 @@
 Tiny-actor is a minimal actor framework for Rust. Because it tries to stay as minimal as possible,
 it can be used both in libraries, as well as in applications.
 
-The core priniciple of tiny-actor is the mergin of inboxes and processes. It's impossible
-to create an inbox without a process. This allows for building simple pools and supervision-trees, with
+The core priniciple of tiny-actor is merging inboxes with processes. It's impossible
+to create an inbox without a process, this allows for building simple pools and supervision-trees, with
 reliable shutdown behaviour.
 
 # Concepts
 
 ## Channel
 A channel is that which underlies the coupling of inboxes, addresses and children. A channel contains: 
-* One `Child` or `ChildGroup`
+* One `Child` or `ChildPool`
 * Zero or more `Address`es
 * Zero or more `Inbox`es
 
@@ -34,7 +34,7 @@ the `Child`. More processes can be spawned later, which transforms the `Child` i
 
 ## ChildPool
 A `ChildPool` is similar to a `Child`, except that the `Channel` can have more than one `Inbox`. 
-A `ChildGroup` can be streamed to get the exit-values of all spawned `tokio::task`s.
+A `ChildPool` can be streamed to get the exit-values of all spawned `tokio::task`s.
 
 ## Closing
 When a `Channel` is closed, it is not longer possible to send new messages into it. It is still possible to 
@@ -58,12 +58,12 @@ Exit can refer to two seperate events which, with good practise, always occur at
 * An `Inbox` can exit by being dropped. Once all `Inbox`rd of a `Channel` have been dropped, the `Channel` itself
 has exited. This type of exit can be retrieved/awaited from the `Channel` at any time.
 * A `tokio::task` can exit, which means the process is no longer alive. This can only be queried only once, by 
-awaiting the `Child` or `ChildGroup`.
+awaiting the `Child` or `ChildPool`.
 Therefore, it is recommended to drop an `Inbox` only when the process itself is also exiting. This way, an exit 
 always refers to the same event.
 
 ## Abort-timer
-A `Child` or `ChildGroup` has an abort-timer. If the `Child` or `ChildGroup` is attached, then it will instantly
+A `Child` or `ChildPool` has an abort-timer. If the `Child` or `ChildPool` is attached, then it will instantly
 send a `Halt`-signal to all inboxes. Then, after the abort-timer, if the child still has not exited, it will be
 aborted.
 

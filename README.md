@@ -1,4 +1,9 @@
 # tiny-actor
+
+
+[![Crates.io](https://img.shields.io/crates/v/tiny-actor)](https://crates.io/crates/tiny-actor)
+[![Documentation](https://docs.rs/tiny-actor/badge.svg)](https://docs.rs/tiny-actor)
+
 Tiny-actor is a minimal actor framework for Rust. Because it tries to stay as minimal as possible,
 it can be used both in libraries, as well as in applications.
 

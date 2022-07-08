@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "tiny-actor"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "concurrent-queue",
  "event-listener",

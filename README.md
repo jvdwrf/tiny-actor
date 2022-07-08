@@ -10,6 +10,22 @@ I have been trying to figure out the most what the most ergonomic way is to writ
 
 # Concepts
 
+## Overview
+```
+|¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
+|                            Channel                          |
+|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
+|  |              Actor                |  |   Child(Pool)  |  |
+|  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |  |________________|  |
+|  |  |         Process(es)         |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
+|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |  Address(es)   |  |
+|  |  |  | tokio-task |  | Inbox |  |  |  |________________|  |
+|  |  |  |____________|  |_______|  |  |                      |
+|  |  |_____________________________|  |                      |
+|  |___________________________________|                      |
+|_____________________________________________________________|
+```
+
 ## Channel
 A channel is that which underlies the coupling of inboxes, addresses and children. A channel contains: 
 * One `Child` or `ChildPool`

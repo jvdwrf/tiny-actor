@@ -10,22 +10,6 @@ I have been trying to figure out the most what the most ergonomic way is to writ
 
 # Concepts
 
-## Overview
-```other
-|¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
-|                            Channel                          |
-|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
-|  |              Actor                |  |   Child(Pool)  |  |
-|  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |  |________________|  |
-|  |  |         Process(es)         |  |                      |
-|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
-|  |  |  | tokio-task |  | Inbox |  |  |  |  Address(es)   |  |
-|  |  |  |____________|  |_______|  |  |  |________________|  |
-|  |  |_____________________________|  |                      |
-|  |___________________________________|                      |
-|_____________________________________________________________|
-```
-
 ## Channel
 A channel is that which underlies the coupling of inboxes, addresses and children. A channel contains: 
 * One `Child` or `ChildPool`
@@ -45,8 +29,7 @@ A `Child` is a handle to a `Channel` with a one `Inbox`. The `Child` can be awai
 A `ChildPool` is similar to a `Child`, except that the `Channel` can have more than one `Inbox`. A `ChildPool` can be streamed to get the exit-values of all spawned `tokio::task`s.
 
 ## Closing
-When a `Channel` is closed, it is not longer possible to send new messages into it. It is still possible to take out any messages that are remaining. A channel that is closed does not have to exit afterwards. Any senders are notified with a `SendError::Closed`. Receivers will receive `RecvError::ClosedAndEmpty` once 
-the channel has been emptied.
+When a `Channel` is closed, it is not longer possible to send new messages into it. It is still possible to take out any messages that are remaining. A channel that is closed does not have to exit afterwards. Any senders are notified with a `SendError::Closed`. Receivers will receive `RecvError::ClosedAndEmpty` once the channel has been emptied.
 
 ## Halting
 An `Inbox` can be halted exactly once. When receiving a `RecvError::Halted` the process should exit. A `Channel` can be partially halted, meaning that only some of the `Inbox`es have been halted.
@@ -60,15 +43,26 @@ Exit can refer to two seperate events which, with good practise, always occur at
 * A `tokio::task` can exit, which means the process is no longer alive. This can only be queried only once, by awaiting the `Child` or `ChildPool` Therefore, it is recommended to drop an `Inbox` only when the process itself is also exiting. This way, an exit always refers to the same event.
 
 ## Abort-timer
-A `Child` or `ChildPool` has an abort-timer. If the `Child` or `ChildPool` is attached, then it will instantly
-send a `Halt`-signal to all inboxes. Then, after the abort-timer, if the child still has not exited, it will be aborted.
+A `Child` or `ChildPool` has an abort-timer. If the `Child` or `ChildPool` is attached, then it will instantly send a `Halt`-signal to all inboxes. Then, after the abort-timer, if the child still has not exited, it will be aborted.
 
 ## Capacity
-A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until
-it's capacity has been reached, after reaching the capacity, senders must wait until space is
-available. An unbounded `Channel` does not have this limit, but instead applies a
-backoff-algorithm: The more messages in the `Channel`, the longer the sender must wait before
-it is allowed to send.
+A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until it's capacity has been reached, after reaching the capacity, senders must wait until space is available. An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send.
+
+## Overview
+```other
+|¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
+|                            Channel                          |
+|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
+|  |              Actor                |  |   Child(Pool)  |  |
+|  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |  |________________|  |
+|  |  |         Process(es)         |  |                      |
+|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
+|  |  |  | tokio-task |  | Inbox |  |  |  |  Address(es)   |  |
+|  |  |  |____________|  |_______|  |  |  |________________|  |
+|  |  |_____________________________|  |                      |
+|  |___________________________________|                      |
+|_____________________________________________________________|
+```
 
 # Examples
 

@@ -27,20 +27,20 @@ impl<T> Address<T> {
     }
 
     /// Attempt to send a message into the channel:
-    /// * `unbounded` -> fails if [BackPressure] gives a timeout or if the channel is closed.
-    /// * `bounded` -> fails if the channel is closed or full.
+    /// * `unbounded` -> Fails if [BackPressure] gives a timeout or if the channel is closed.
+    /// * `bounded` -> Fails if the channel is closed or full.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         try_send(&self.channel, msg)
     }
 
     /// Attempt to send a message into the channel:
-    /// * `unbounded` -> fails if the channel is closed.
-    /// * `bounded` -> fails if the channel is closed or full.
+    /// * `unbounded` -> Fails if the channel is closed.
+    /// * `bounded` -> Fails if the channel is closed or full.
     pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
         send_now(&self.channel, msg)
     }
 
-    /// Send a message into the channel.
+    /// Attempt to send a message into the channel.
     /// * `unbounded` -> Fails if the channel is closed. If [BackPressure] gives a timeout,
     /// it waits until this timeout is finished.
     /// * `bounded` -> Fails if the channel is closed. If the channel is full, this waits until

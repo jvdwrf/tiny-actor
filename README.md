@@ -82,6 +82,7 @@ A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive 
 ## Basic
 ```rust
 use tiny_actor::*;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {

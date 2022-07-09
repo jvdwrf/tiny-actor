@@ -14,7 +14,7 @@ use crate::*;
 pub(crate) struct Channel<T> {
     /// The underlying queue
     queue: ConcurrentQueue<T>,
-
+    /// The capacity of the channel
     capacity: Capacity,
 
     /// The amount of addresses associated to this channel
@@ -55,7 +55,7 @@ impl<T> Channel<T> {
     ///
     /// ## Panics
     /// Panics if `inbox-count < 1`
-    pub fn add_inbox(self: &Arc<Self>) {
+    pub fn add_inbox(&self) {
         let prev_count = self.inbox_count.fetch_add(1, Ordering::AcqRel);
         assert!(prev_count > 0);
     }
@@ -64,7 +64,7 @@ impl<T> Channel<T> {
     /// False if `inbox-count < 1`, and does not modify the inbox-count.
     ///
     /// This method is slower than add_inbox.
-    pub fn try_add_inbox(self: &Arc<Self>) -> bool {
+    pub fn try_add_inbox(&self) -> Result<(), ()> {
         let result = self
             .inbox_count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |val| {
@@ -76,8 +76,8 @@ impl<T> Channel<T> {
             });
 
         match result {
-            Ok(_) => true,
-            Err(_) => false,
+            Ok(_) => Ok(()),
+            Err(_) => Err(()),
         }
     }
 
@@ -142,6 +142,7 @@ impl<T> Channel<T> {
     pub fn close(&self) -> bool {
         if self.queue.close() {
             self.notify_recv_listeners(usize::MAX);
+            self.notify_send_listeners(usize::MAX);
             true
         } else {
             false
@@ -240,11 +241,14 @@ impl<T> Channel<T> {
     pub fn capacity(&self) -> &Capacity {
         &self.capacity
     }
+
+    /// Whether all inboxes linked to this channel have exited.
+    pub fn has_exited(&self) -> bool {
+        self.inbox_count.load(Ordering::Acquire) == 0
+    }
 }
 
 /// Listener helper functions.
-///
-/// These will not be directly part of public api
 impl<T> Channel<T> {
     /// Get a new recv-event listener
     ///
@@ -281,5 +285,204 @@ impl<T> Channel<T> {
     /// Notify the exit-listeners
     fn notify_exit_listeners(&self, amount: usize) {
         self.exit_event.notify(amount);
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::Channel;
+    use crate::{BackPressure, Capacity};
+    use concurrent_queue::PushError;
+    use event_listener::EventListener;
+    use futures::FutureExt;
+    use std::sync::Arc;
+
+    #[test]
+    fn capacity_types() {
+        let channel = Channel::<()>::new(1, 1, Capacity::Bounded(10));
+        assert!(channel.queue.capacity().is_some());
+
+        let channel = Channel::<()>::new(1, 1, Capacity::Unbounded(BackPressure::default()));
+        assert!(channel.queue.capacity().is_none());
+    }
+
+    #[test]
+    fn closing_channel() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let listeners = Listeners::new(&channel);
+
+        channel.close();
+
+        assert!(channel.is_closed());
+        assert!(!channel.has_exited());
+        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
+        assert_eq!(channel.take_next_msg(), Err(()));
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 0,
+            send: 10,
+        });
+    }
+
+    #[test]
+    fn no_more_senders_remaining() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let listeners = Listeners::new(&channel);
+
+        channel.remove_address();
+
+        assert!(channel.is_closed());
+        assert!(!channel.has_exited());
+        assert_eq!(channel.address_count(), 0);
+        assert_eq!(channel.inbox_count(), 1);
+        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
+        assert_eq!(channel.take_next_msg(), Err(()));
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 0,
+            send: 10,
+        });
+    }
+
+    #[test]
+    fn no_more_receivers_remaining() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let listeners = Listeners::new(&channel);
+
+        channel.remove_inbox();
+
+        assert!(channel.is_closed());
+        assert!(channel.has_exited());
+        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.address_count(), 1);
+        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
+        assert_eq!(channel.take_next_msg(), Err(()));
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 10,
+            send: 10,
+        });
+    }
+
+    #[test]
+    fn exiting_drops_all_messages() {
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
+        let msg = Arc::new(());
+        channel.push_msg(msg.clone()).unwrap();
+        assert_eq!(Arc::strong_count(&msg), 2);
+        channel.remove_inbox();
+        assert_eq!(Arc::strong_count(&msg), 1);
+    }
+
+    #[test]
+    fn closing_doesnt_drop_messages() {
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
+        let msg = Arc::new(());
+        channel.push_msg(msg.clone()).unwrap();
+        assert_eq!(Arc::strong_count(&msg), 2);
+        channel.close();
+        assert_eq!(Arc::strong_count(&msg), 2);
+    }
+
+    #[test]
+    fn try_add_inbox_with_0_receivers() {
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
+        channel.remove_inbox();
+        assert_eq!(channel.try_add_inbox(), Err(()));
+        assert_eq!(channel.inbox_count(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn add_inbox_with_0_receivers() {
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
+        channel.remove_inbox();
+        channel.add_inbox();
+    }
+
+    #[test]
+    fn sending_notifies() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let listeners = Listeners::new(&channel);
+        channel.push_msg(()).unwrap();
+
+        listeners.assert_notified(Assert {
+            recv: 1,
+            exit: 0,
+            send: 0,
+        });
+    }
+
+    #[test]
+    fn recveiving_notifies() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        channel.push_msg(()).unwrap();
+        let listeners = Listeners::new(&channel);
+        channel.take_next_msg().unwrap();
+
+        listeners.assert_notified(Assert {
+            recv: 1,
+            exit: 0,
+            send: 1,
+        });
+    }
+
+    struct Listeners {
+        recv: Vec<EventListener>,
+        exit: Vec<EventListener>,
+        send: Vec<EventListener>,
+    }
+
+    struct Assert {
+        recv: usize,
+        exit: usize,
+        send: usize,
+    }
+
+    impl Listeners {
+        fn new<T>(channel: &Channel<T>) -> Self {
+            Self {
+                recv: (0..10)
+                    .into_iter()
+                    .map(|_| channel.recv_listener())
+                    .collect(),
+                exit: (0..10)
+                    .into_iter()
+                    .map(|_| channel.exit_listener())
+                    .collect(),
+                send: (0..10)
+                    .into_iter()
+                    .map(|_| channel.send_listener())
+                    .collect(),
+            }
+        }
+
+        fn assert_notified(self, assert: Assert) {
+            let recv = self
+                .recv
+                .into_iter()
+                .map(|l| l.now_or_never().is_some())
+                .filter(|bool| *bool)
+                .collect::<Vec<_>>()
+                .len();
+            let exit = self
+                .exit
+                .into_iter()
+                .map(|l| l.now_or_never().is_some())
+                .filter(|bool| *bool)
+                .collect::<Vec<_>>()
+                .len();
+            let send = self
+                .send
+                .into_iter()
+                .map(|l| l.now_or_never().is_some())
+                .filter(|bool| *bool)
+                .collect::<Vec<_>>()
+                .len();
+
+            assert_eq!(assert.recv, recv);
+            assert_eq!(assert.exit, exit);
+            assert_eq!(assert.send, send);
+        }
     }
 }

@@ -29,12 +29,12 @@ impl<T> Inbox<T> {
     /// Create a new inbox from a channel. Returns `None` if the `Channel` has exited.
     pub(crate) fn try_from_channel(channel: Arc<Channel<T>>) -> Option<Self> {
         match channel.try_add_inbox() {
-            true => Some(Self {
+            Ok(()) => Some(Self {
                 channel,
                 listener: None,
                 signaled_halt: false,
             }),
-            false => None,
+            Err(()) => None,
         }
     }
 

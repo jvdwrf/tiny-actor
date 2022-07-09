@@ -156,7 +156,7 @@ impl<T: Send + 'static> Child<T> {
 
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
-        self.inbox_count() == 0
+        self.channel.has_exited()
     }
 
     /// Get the capacity of the channel.
@@ -337,7 +337,7 @@ impl<T: Send + 'static> ChildPool<T> {
 
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
-        self.inbox_count() == 0
+        self.channel.has_exited()
     }
 
     pub fn is_aborted(&self) -> bool {
@@ -406,6 +406,7 @@ pub(crate) trait DynamicChannel: Send + 'static {
     fn address_count(&self) -> usize;
     fn is_closed(&self) -> bool;
     fn capacity(&self) -> &Capacity;
+    fn has_exited(&self) -> bool;
 }
 
 impl<T: Send + 'static> DynamicChannel for Channel<T> {
@@ -433,6 +434,9 @@ impl<T: Send + 'static> DynamicChannel for Channel<T> {
     /// Get the capacity of the channel.
     fn capacity(&self) -> &Capacity {
         self.capacity()
+    }
+    fn has_exited(&self) -> bool {
+        self.has_exited()
     }
 }
 

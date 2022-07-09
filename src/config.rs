@@ -162,74 +162,59 @@ mod test {
 
     #[test]
     fn backpressure_linear() {
-        let back_pressure = BackPressure {
+        let cfg = BackPressure {
             start_at: 0,
             timeout: Duration::from_secs(1),
             growth: Growth::Linear,
         };
 
-        assert_eq!(back_pressure.get_timeout(0), Some(Duration::from_secs(1)));
-        assert_eq!(back_pressure.get_timeout(1), Some(Duration::from_secs(2)));
-        assert_eq!(back_pressure.get_timeout(10), Some(Duration::from_secs(11)));
+        assert_eq!(cfg.get_timeout(0), Some(Duration::from_secs(1)));
+        assert_eq!(cfg.get_timeout(1), Some(Duration::from_secs(2)));
+        assert_eq!(cfg.get_timeout(10), Some(Duration::from_secs(11)));
     }
 
     #[test]
     fn backpressure_linear_start_at() {
-        let back_pressure = BackPressure {
+        let cfg = BackPressure {
             start_at: 10,
             timeout: Duration::from_secs(1),
             growth: Growth::Linear,
         };
 
-        assert_eq!(back_pressure.get_timeout(0), None);
-        assert_eq!(back_pressure.get_timeout(1), None);
-        assert_eq!(back_pressure.get_timeout(9), None);
-        assert_eq!(back_pressure.get_timeout(10), Some(Duration::from_secs(1)));
-        assert_eq!(back_pressure.get_timeout(11), Some(Duration::from_secs(2)));
-        assert_eq!(back_pressure.get_timeout(20), Some(Duration::from_secs(11)));
+        assert_eq!(cfg.get_timeout(0), None);
+        assert_eq!(cfg.get_timeout(1), None);
+        assert_eq!(cfg.get_timeout(9), None);
+        assert_eq!(cfg.get_timeout(10), Some(Duration::from_secs(1)));
+        assert_eq!(cfg.get_timeout(11), Some(Duration::from_secs(2)));
+        assert_eq!(cfg.get_timeout(20), Some(Duration::from_secs(11)));
     }
 
     #[test]
     fn backpressure_linear_max() {
-        let back_pressure = BackPressure {
+        let cfg = BackPressure {
             start_at: usize::MAX,
             timeout: Duration::from_secs(1),
             growth: Growth::Linear,
         };
 
-        assert_eq!(back_pressure.get_timeout(0), None);
-        assert_eq!(back_pressure.get_timeout(1), None);
-        assert_eq!(back_pressure.get_timeout(9), None);
-        assert_eq!(back_pressure.get_timeout(usize::MAX - 1), None);
-        assert_eq!(
-            back_pressure.get_timeout(usize::MAX),
-            Some(Duration::from_secs(1))
-        );
+        assert_eq!(cfg.get_timeout(0), None);
+        assert_eq!(cfg.get_timeout(1), None);
+        assert_eq!(cfg.get_timeout(9), None);
+        assert_eq!(cfg.get_timeout(usize::MAX - 1), None);
+        assert_eq!(cfg.get_timeout(usize::MAX), Some(Duration::from_secs(1)));
     }
 
     #[test]
     fn backpressure_exponential() {
-        let back_pressure = BackPressure {
+        let cfg = BackPressure {
             start_at: 0,
             timeout: Duration::from_secs(1),
             growth: Growth::Exponential(1.1),
         };
 
-        assert_eq!(
-            back_pressure.get_timeout(0),
-            Some(Duration::from_millis(1000))
-        );
-        assert_eq!(
-            back_pressure.get_timeout(1),
-            Some(Duration::from_millis(1100))
-        );
-        assert_eq!(
-            back_pressure.get_timeout(2),
-            Some(Duration::from_millis(1210))
-        );
-        assert_eq!(
-            back_pressure.get_timeout(3),
-            Some(Duration::from_nanos(1331000064))
-        );
+        assert_eq!(cfg.get_timeout(0), Some(Duration::from_nanos(1_000_000_000)));
+        assert_eq!(cfg.get_timeout(1), Some(Duration::from_nanos(1_100_000_000)));
+        assert_eq!(cfg.get_timeout(2), Some(Duration::from_nanos(1_210_000_000)));
+        assert_eq!(cfg.get_timeout(3), Some(Duration::from_nanos(1_331_000_064)));
     }
 }

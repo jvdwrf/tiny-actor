@@ -91,7 +91,7 @@ impl<T> Address<T> {
 
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
-        self.inbox_count() == 0
+        self.channel.has_exited()
     }
 
     /// Get the capacity of the channel.
@@ -106,18 +106,19 @@ impl<T> Future for Address<T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            if self.channel.inbox_count() == 0 {
-                return Poll::Ready(());
-            }
-
+        if self.channel.has_exited() {
+            Poll::Ready(())
+        } else {
             if self.exit_listener.is_none() {
                 self.exit_listener = Some(self.channel.exit_listener())
             }
-
             match self.exit_listener.as_mut().unwrap().poll_unpin(cx) {
-                Poll::Ready(()) => self.exit_listener = None,
-                Poll::Pending => return Poll::Pending,
+                Poll::Ready(()) => {
+                    assert!(self.has_exited());
+                    self.exit_listener = None;
+                    Poll::Ready(())
+                }
+                Poll::Pending => Poll::Pending,
             }
         }
     }

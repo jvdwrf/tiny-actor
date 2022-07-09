@@ -58,23 +58,24 @@ impl<T> Inbox<T> {
         Rcv { inbox: self }
     }
 
-    /// Try to send a message into the channel:
-    /// `unbounded` -> fails if backoff has timeout
-    /// `bounded` -> fails if full
+    /// See [Address::try_send]
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        self.channel.try_send(msg)
+        try_send(&self.channel, msg)
     }
 
-    /// Try to send a message into the channel:
-    /// `unbounded` -> always succeeds
-    /// `bounded` -> fails if full
+    /// See [Address::send_now]
     pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
-        self.channel.send_now(msg)
+        send_now(&self.channel, msg)
     }
 
-    /// Send a message into the channel.
+    /// See [Address::send]
     pub fn send(&self, msg: T) -> Snd<'_, T> {
-        Snd::new(&self.channel, msg)
+        send(&self.channel, msg)
+    }
+
+    /// See [Address::send_blocking]
+    pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
+        send_blocking(&self.channel, msg)
     }
 
     /// Receive a message while blocking the scheduler.

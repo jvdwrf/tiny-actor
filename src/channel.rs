@@ -242,54 +242,6 @@ impl<T> Channel<T> {
     }
 }
 
-impl<T> Channel<T> {
-    pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
-        Ok(self.push_msg(msg)?)
-    }
-
-    pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        match self.capacity() {
-            Capacity::Bounded(_) => Ok(self.push_msg(msg)?),
-            Capacity::Unbounded(backoff) => match backoff.get_timeout(self.msg_count()) {
-                Some(_) => Err(TrySendError::Full(msg)),
-                None => Ok(self.push_msg(msg)?),
-            },
-        }
-    }
-
-    pub fn send(&self, msg: T) -> Snd<'_, T> {
-        Snd::new(&self, msg)
-    }
-
-    pub fn send_blocking(&self, mut msg: T) -> Result<(), SendError<T>> {
-        match self.capacity() {
-            Capacity::Bounded(_) => loop {
-                msg = match self.push_msg(msg) {
-                    Ok(()) => {
-                        return Ok(());
-                    }
-                    Err(PushError::Closed(msg)) => {
-                        return Err(SendError(msg));
-                    }
-                    Err(PushError::Full(msg)) => msg,
-                };
-
-                self.send_listener().wait();
-            },
-            Capacity::Unbounded(backoff) => {
-                let timeout = backoff.get_timeout(self.msg_count());
-                if let Some(timeout) = timeout {
-                    std::thread::sleep(timeout);
-                }
-                self.push_msg(msg).map_err(|e| match e {
-                    PushError::Full(_) => unreachable!("unbounded"),
-                    PushError::Closed(msg) => SendError(msg),
-                })
-            }
-        }
-    }
-}
-
 /// Listener helper functions.
 ///
 /// These will not be directly part of public api

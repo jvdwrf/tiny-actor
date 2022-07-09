@@ -26,28 +26,32 @@ impl<T> Address<T> {
         }
     }
 
-    /// Try to send a message into the channel:
-    /// `unbounded` -> fails if backoff has timeout
-    /// `bounded` -> fails if full
+    /// Attempt to send a message into the channel:
+    /// * `unbounded` -> fails if [BackPressure] gives a timeout or if the channel is closed.
+    /// * `bounded` -> fails if the channel is closed or full.
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        self.channel.try_send(msg)
+        try_send(&self.channel, msg)
     }
 
-    /// Try to send a message into the channel:
-    /// `unbounded` -> always succeeds
-    /// `bounded` -> fails if full
+    /// Attempt to send a message into the channel:
+    /// * `unbounded` -> fails if the channel is closed.
+    /// * `bounded` -> fails if the channel is closed or full.
     pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
-        self.channel.send_now(msg)
+        send_now(&self.channel, msg)
     }
 
     /// Send a message into the channel.
+    /// * `unbounded` -> Fails if the channel is closed. If [BackPressure] gives a timeout,
+    /// it waits until this timeout is finished.
+    /// * `bounded` -> Fails if the channel is closed. If the channel is full, this waits until
+    /// space is available.
     pub fn send(&self, msg: T) -> Snd<'_, T> {
-        self.channel.send(msg)
+        send(&self.channel, msg)
     }
 
-    /// Send a message into the channel while blocking the scheduler.
+    /// Same as [Address::send] except for blocking the current os-thread.
     pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
-        self.channel.send_blocking(msg)
+        send_blocking(&self.channel, msg)
     }
 
     /// Close the channel.
@@ -136,7 +140,7 @@ impl<A> Drop for Address<A> {
 }
 
 //------------------------------------------------------------------------------------------------
-//  Snd
+//  Sending
 //------------------------------------------------------------------------------------------------
 
 pub struct Snd<'a, T> {
@@ -230,6 +234,56 @@ impl<'a, T> Future for Snd<'a, T> {
                     None => poll_push_msg(&mut self),
                 },
             },
+        }
+    }
+}
+
+/// See [Address::send]
+pub(crate) fn send<T>(channel: &Channel<T>, msg: T) -> Snd<'_, T> {
+    Snd::new(&channel, msg)
+}
+
+/// See [Address::send_now]
+pub(crate) fn send_now<T>(channel: &Channel<T>, msg: T) -> Result<(), TrySendError<T>> {
+    Ok(channel.push_msg(msg)?)
+}
+
+/// See [Address::try_send]
+pub(crate) fn try_send<T>(channel: &Channel<T>, msg: T) -> Result<(), TrySendError<T>> {
+    match channel.capacity() {
+        Capacity::Bounded(_) => Ok(channel.push_msg(msg)?),
+        Capacity::Unbounded(backoff) => match backoff.get_timeout(channel.msg_count()) {
+            Some(_) => Err(TrySendError::Full(msg)),
+            None => Ok(channel.push_msg(msg)?),
+        },
+    }
+}
+
+/// See [Address::send_blocking]
+pub(crate) fn send_blocking<T>(channel: &Channel<T>, mut msg: T) -> Result<(), SendError<T>> {
+    match channel.capacity() {
+        Capacity::Bounded(_) => loop {
+            msg = match channel.push_msg(msg) {
+                Ok(()) => {
+                    return Ok(());
+                }
+                Err(PushError::Closed(msg)) => {
+                    return Err(SendError(msg));
+                }
+                Err(PushError::Full(msg)) => msg,
+            };
+
+            channel.send_listener().wait();
+        },
+        Capacity::Unbounded(backoff) => {
+            let timeout = backoff.get_timeout(channel.msg_count());
+            if let Some(timeout) = timeout {
+                std::thread::sleep(timeout);
+            }
+            channel.push_msg(msg).map_err(|e| match e {
+                PushError::Full(_) => unreachable!("unbounded"),
+                PushError::Closed(msg) => SendError(msg),
+            })
         }
     }
 }

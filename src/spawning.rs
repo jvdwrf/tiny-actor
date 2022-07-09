@@ -1,13 +1,50 @@
 use crate::*;
 use futures::Future;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc};
 
+/// [spawn] with [Config::default].
+pub fn spawn_default<T, R, Fun, Fut>(fun: Fun) -> (Child<R>, Address<T>)
+where
+    Fun: FnOnce(Inbox<T>) -> Fut + Send + 'static,
+    Fut: Future<Output = R> + Send + 'static,
+    R: Send + 'static,
+    T: Send + 'static,
+{
+    spawn(Config::default(), fun)
+}
 
+/// [spawn_pooled] with [Config::default].
+pub fn spawn_default_pooled<T, R, I, Fun, Fut>(
+    iter: impl IntoIterator<Item = I>,
+    fun: Fun,
+) -> (ChildPool<R>, Address<T>)
+where
+    Fun: FnOnce(I, Inbox<T>) -> Fut + Send + 'static + Clone,
+    Fut: Future<Output = R> + Send + 'static,
+    R: Send + 'static,
+    T: Send + 'static,
+    I: Send + 'static,
+{
+    spawn_pooled(iter, Config::default(), fun)
+}
 
-//------------------------------------------------------------------------------------------------
-//  Spawn
-//------------------------------------------------------------------------------------------------
-
+/// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
+/// and [Address]. The `Process` is spawned with a single [Inbox].
+/// 
+/// # Example
+/// ```no_run
+///# use tiny_actor::*;
+///# #[tokio::main]
+///# async fn main() {
+/// let (child, address) = 
+///     spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
+///         loop {
+///             let msg = inbox.recv().await;
+///             println!("Received message: {msg:?}");
+///         }
+///     });
+///# }
+/// ```
 pub fn spawn<T, R, Fun, Fut>(config: Config, fun: Fun) -> (Child<R>, Address<T>)
 where
     Fun: FnOnce(Inbox<T>) -> Fut + Send + 'static,
@@ -19,15 +56,31 @@ where
 
     let handle = tokio::task::spawn(async move { fun(inbox).await });
 
-    let child = Child::new(
-        channel,
-        handle,
-        config.link,
-    );
+    let child = Child::new(channel, handle, config.link);
 
     (child, address)
 }
 
+/// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
+/// and [Address]. The `Process`es are spawned with [Inbox]es.
+/// 
+/// The amount of `Process`es that are spawned is equal to the length of the iterator.
+/// Every process get's access to a single item within the iterator as it's first argument.
+/// 
+/// # Example
+/// ```no_run
+///# use tiny_actor::*;
+///# #[tokio::main]
+///# async fn main() {
+/// let (child, address) = 
+///     spawn_pooled(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
+///         loop {
+///             let msg = inbox.recv().await;
+///             println!("Received message on actor {i}: {msg:?}");
+///         }
+///     });
+///# }
+/// ```
 pub fn spawn_pooled<T, R, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
@@ -52,11 +105,7 @@ where
         handles.push(handle);
     }
 
-    let children = ChildPool::new(
-        channel,
-        handles,
-        config.link,
-    );
+    let children = ChildPool::new(channel, handles, config.link);
 
     (children, address)
 }

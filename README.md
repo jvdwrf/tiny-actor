@@ -56,7 +56,7 @@ When a `Channel` is closed, it is not longer possible to send new messages into 
 A `Process` can be `halt`ed exactly once, by receiving a `RecvError::Halted`. Afterwards the `Process` should exit. An `Actor` can be partially halted, meaning that only some of the `Processes`es have been `halt`ed.
 
 ## Aborting
-An `Actor` can be `abort`ed through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tokio::task`s to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`. By default `Process`es are automatically aborted when the `Child/ChildGroup` is dropped. This can be prevented by detaching the `Child/ChildGroup`.
+An `Actor` can be `abort`ed through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tokio::task`s to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`. By default `Process`es are automatically aborted when the `Child/ChildPool` is dropped. This can be prevented by detaching the `Child/ChildPool`.
 
 ## Exiting
 Exit can refer to two seperate events which, with good practise, always occur at the same time:

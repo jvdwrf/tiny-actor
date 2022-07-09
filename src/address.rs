@@ -1,7 +1,7 @@
 use crate::*;
 use concurrent_queue::PushError;
 use event_listener::EventListener;
-use futures::{pin_mut, Future, FutureExt};
+use futures::{Future, FutureExt};
 use std::{
     pin::Pin,
     sync::Arc,

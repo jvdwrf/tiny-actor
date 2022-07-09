@@ -2,11 +2,11 @@
 [![Crates.io](https://img.shields.io/crates/v/tiny-actor)](https://crates.io/crates/tiny-actor)
 [![Documentation](https://docs.rs/tiny-actor/badge.svg)](https://docs.rs/tiny-actor)
 
-Tiny-actor is a minimal actor framework for Rust. Because it tries to stay as minimal as possible, it can be used both in libraries, as well as in applications.
+Tiny-actor is a tiny tokio-based actor framework for Rust. 
 
-The core priniciple of tiny-actor is merging inboxes with processes, it's impossible to create an inbox without a process. This allows for building simple pools and supervision-trees with reliable shutdown behaviour.
+Because tiny-actor tries to stay as minimal as possible, it can be used both in libraries, as well as in applications. The core idea of tiny-actor is merging `Inbox`es with `tokio::task`s: It's impossible to create an `Inbox` without a `tokio::task`. This principle allows for building simple pools and supervision-trees with reliable shutdown behaviour.
 
-I have been trying to figure out the most what the most ergonomic way is to write an actor-system in Rust. My last attempt, a fully-fledged actor framework is [zestors](https://crates.io/crates/zestors). I have extracted the core of zestors, and seperated it into this crate. In the future, zestors will be based on tiny-actor.
+I have been trying to figure out the most what the best way is to write an actor-system in Rust. My current attempt, a full actor framework ([zestors](https://crates.io/crates/zestors)) will be using tiny-actor in the future.
 
 # Concepts
 

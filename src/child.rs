@@ -172,7 +172,7 @@ impl<T: Send + 'static> Child<T> {
 impl<T: Send + 'static> Drop for Child<T> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if self.inbox_count() != 0 {
+            if !self.has_exited() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
@@ -375,7 +375,7 @@ impl<T: Send + 'static> Stream for ChildPool<T> {
 impl<T: Send + 'static> Drop for ChildPool<T> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if self.inbox_count() != 0 {
+            if !self.has_exited() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {

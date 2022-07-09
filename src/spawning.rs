@@ -2,52 +2,7 @@ use crate::*;
 use futures::Future;
 use std::{sync::Arc, time::Duration};
 
-//------------------------------------------------------------------------------------------------
-//  Config
-//------------------------------------------------------------------------------------------------
 
-/// The config used for spawning new processes.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Config {
-    pub abort_timer: Duration,
-    pub attached: bool,
-    pub capacity: Option<usize>,
-}
-
-impl Config {
-    /// Create a custom spawn configuration.
-    pub fn new(capacity: Option<usize>, attached: bool, abort_timer: Duration) -> Self {
-        Self {
-            abort_timer,
-            attached,
-            capacity,
-        }
-    }
-
-    /// A default bounded inbox:
-    /// * abort_timer: 1 sec
-    /// * attached: true
-    /// * capacity: Some(capacity)
-    pub fn bounded(capacity: usize) -> Self {
-        Self {
-            abort_timer: Duration::from_secs(1),
-            attached: true,
-            capacity: Some(capacity),
-        }
-    }
-
-    /// A default unbounded inbox:
-    /// * abort_timer: 1 sec
-    /// * attached: true
-    /// * capacity: None
-    pub fn unbounded() -> Self {
-        Self {
-            abort_timer: Duration::from_secs(1),
-            attached: true,
-            capacity: None,
-        }
-    }
-}
 
 //------------------------------------------------------------------------------------------------
 //  Spawn
@@ -67,7 +22,7 @@ where
     let child = Child::new(
         channel,
         handle,
-        SupervisionState::new(config.attached, config.abort_timer),
+        config.link,
     );
 
     (child, address)
@@ -100,13 +55,13 @@ where
     let children = ChildPool::new(
         channel,
         handles,
-        SupervisionState::new(config.attached, config.abort_timer),
+        config.link,
     );
 
     (children, address)
 }
 
-fn setup_channel<T>(capacity: Option<usize>) -> (Inbox<T>, Address<T>, Arc<Channel<T>>) {
+fn setup_channel<T>(capacity: Capacity) -> (Inbox<T>, Address<T>, Arc<Channel<T>>) {
     let channel = Arc::new(Channel::new(1, 1, capacity));
     let inbox = Inbox::from_channel(channel.clone());
     let address = Address::from_channel(channel.clone());

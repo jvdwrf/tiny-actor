@@ -1,64 +1,7 @@
 use crate::*;
 use futures::{Future, FutureExt, Stream};
-use std::{
-    any::{Any},
-    fmt::Debug,
-    mem::ManuallyDrop,
-    sync::Arc,
-    task::Poll,
-    time::Duration,
-};
+use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
-
-//------------------------------------------------------------------------------------------------
-//  SupervisionState
-//------------------------------------------------------------------------------------------------
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SupervisionState {
-    pub status: SupervisionStatus,
-    pub abort_timer: Duration,
-}
-
-impl SupervisionState {
-    pub(crate) fn attach(&mut self) -> Result<bool, AlreadyAborted> {
-        match self.status {
-            SupervisionStatus::Attached => Ok(false),
-            SupervisionStatus::Detached => {
-                self.status = SupervisionStatus::Attached;
-                Ok(true)
-            }
-            SupervisionStatus::Aborted => Err(AlreadyAborted),
-        }
-    }
-
-    pub(crate) fn detach(&mut self) -> Result<bool, AlreadyAborted> {
-        match self.status {
-            SupervisionStatus::Detached => Ok(false),
-            SupervisionStatus::Attached => {
-                self.status = SupervisionStatus::Detached;
-                Ok(true)
-            }
-            SupervisionStatus::Aborted => Err(AlreadyAborted),
-        }
-    }
-
-    pub(crate) fn set_abort_timer(&mut self, mut timer: Duration) -> Duration {
-        std::mem::swap(&mut self.abort_timer, &mut timer);
-        timer
-    }
-
-    pub(crate) fn new(attached: bool, abort_timer: Duration) -> Self {
-        Self {
-            status: if attached {
-                SupervisionStatus::Attached
-            } else {
-                SupervisionStatus::Detached
-            },
-            abort_timer,
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SupervisionStatus {
@@ -77,44 +20,43 @@ pub struct AlreadyAborted;
 pub struct Child<T: Send + 'static> {
     handle: Option<JoinHandle<T>>,
     channel: Arc<dyn DynamicChannel>,
-    state: SupervisionState,
+    link: Link,
+    is_aborted: bool,
 }
 
 impl<T: Send + 'static> Child<T> {
-    pub(crate) fn new<R>(
-        channel: Arc<Channel<R>>,
-        join_handle: JoinHandle<T>,
-        state: SupervisionState,
-    ) -> Self
+    pub(crate) fn new<R>(channel: Arc<Channel<R>>, join_handle: JoinHandle<T>, link: Link) -> Self
     where
         R: Send + 'static,
     {
         Self {
             handle: Some(join_handle),
-            state,
+            link,
             channel,
+            is_aborted: false,
         }
     }
 
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    fn _into_parts(self) -> (Arc<dyn DynamicChannel>, JoinHandle<T>, SupervisionState) {
+    fn _into_parts(self) -> (Arc<dyn DynamicChannel>, JoinHandle<T>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handle);
             let channel = std::ptr::read(&no_drop.channel);
-            let state = std::ptr::read(&no_drop.state);
-            (channel, handle.take().unwrap(), state)
+            let link = std::ptr::read(&no_drop.link);
+            let is_aborted = std::ptr::read(&no_drop.is_aborted);
+            (channel, handle.take().unwrap(), link, is_aborted)
         }
     }
 
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub fn into_parts(self) -> (JoinHandle<T>, SupervisionState) {
-        let (_a, b, c) = self._into_parts();
-        (b, c)
+    pub fn into_parts(self) -> (JoinHandle<T>, Link, bool) {
+        let (_a, b, c, d) = self._into_parts();
+        (b, c, d)
     }
 
     /// Attempt to spawn an additional process linked to this channel. This will turn the
@@ -142,12 +84,13 @@ impl<T: Send + 'static> Child<T> {
             Some(inbox) => {
                 let new_handle = tokio::task::spawn(async move { fun(inbox).await });
 
-                let (channel, old_handle, state) = self._into_parts();
+                let (channel, old_handle, link, is_aborted) = self._into_parts();
 
                 Ok(ChildPool {
                     channel: channel,
                     handles: Some(vec![old_handle, new_handle]),
-                    state,
+                    link,
+                    is_aborted: is_aborted
                 })
             }
             None => Err(TrySpawnError::Exited((self, fun))),
@@ -186,52 +129,55 @@ impl<T: Send + 'static> Child<T> {
 
     /// Attach the process. Returns true if the process was detached.
     /// before this. Returns an error if the process has already been aborted.
-    pub fn attach(&mut self) -> Result<bool, AlreadyAborted> {
-        self.state.attach()
+    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
+        self.link.attach(duration)
     }
 
     /// Detach the process. Returns true if the process was attached.
     /// before this. Returns an error if the process has already been aborted.
-    pub fn detach(&mut self) -> Result<bool, AlreadyAborted> {
-        self.state.detach()
-    }
-
-    /// Set the abort-timer of the processes linked to this channel.
-    /// Returns the old abort-timer.
-    pub fn set_abort_timer(&mut self, timer: Duration) -> Duration {
-        self.state.set_abort_timer(timer)
+    pub fn detach(&mut self) -> Option<Duration> {
+        self.link.detach()
     }
 
     /// Abort all processes linked to the channel.
-    pub fn abort(&mut self) {
-        self.state.status = SupervisionStatus::Aborted;
-        self.handle.as_ref().unwrap().abort()
+    ///
+    /// Returns true if this is the first time aborting
+    pub fn abort(&mut self) -> bool {
+        let was_aborted = self.is_aborted;
+        self.is_aborted = true;
+        self.handle.as_ref().unwrap().abort();
+        !was_aborted
     }
 
     /// Get a reference to the current supervision-state
-    pub fn state(&self) -> &SupervisionState {
-        &self.state
+    pub fn link(&self) -> &Link {
+        &self.link
     }
 
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
         self.inbox_count() == 0
     }
+
+    pub fn is_aborted(&self) -> bool {
+        self.is_aborted
+    }
 }
 
 impl<T: Send + 'static> Drop for Child<T> {
     fn drop(&mut self) {
-        if self.state.status == SupervisionStatus::Attached && self.inbox_count() != 0 {
-            if self.state.abort_timer.is_zero() {
-                self.abort();
-            } else {
-                self.halt();
-                let handle = self.handle.take().unwrap();
-                let timer = self.state.abort_timer;
-                tokio::task::spawn(async move {
-                    tokio::time::sleep(timer).await;
-                    handle.abort();
-                });
+        if let Link::Attached(abort_timer) = self.link {
+            if self.inbox_count() != 0 {
+                if abort_timer.is_zero() {
+                    self.abort();
+                } else {
+                    self.halt();
+                    let handle = self.handle.take().unwrap();
+                    tokio::task::spawn(async move {
+                        tokio::time::sleep(abort_timer).await;
+                        handle.abort();
+                    });
+                }
             }
         }
     }
@@ -259,47 +205,44 @@ impl<T: Send + 'static> Future for Child<T> {
 pub struct ChildPool<T: Send + 'static> {
     channel: Arc<dyn DynamicChannel>,
     handles: Option<Vec<JoinHandle<T>>>,
-    state: SupervisionState,
+    link: Link,
+    is_aborted: bool,
 }
 
 impl<T: Send + 'static> ChildPool<T> {
     pub(crate) fn new<R: 'static + Send>(
         channel: Arc<Channel<R>>,
         handles: Vec<JoinHandle<T>>,
-        state: SupervisionState,
+        link: Link,
     ) -> Self {
         Self {
             channel,
             handles: Some(handles),
-            state,
+            link,
+            is_aborted: false,
         }
     }
 
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub(crate) fn _into_parts(
-        self,
-    ) -> (
-        Arc<dyn DynamicChannel>,
-        Vec<JoinHandle<T>>,
-        SupervisionState,
-    ) {
+    pub(crate) fn _into_parts(self) -> (Arc<dyn DynamicChannel>, Vec<JoinHandle<T>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handles);
             let channel = std::ptr::read(&no_drop.channel);
-            let state = std::ptr::read(&no_drop.state);
-            (channel, handle.take().unwrap(), state)
+            let link = std::ptr::read(&no_drop.link);
+            let is_aborted = std::ptr::read(&no_drop.is_aborted);
+            (channel, handle.take().unwrap(), link, is_aborted)
         }
     }
 
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub fn into_parts(self) -> (Vec<JoinHandle<T>>, SupervisionState) {
-        let (_a, b, c) = self._into_parts();
-        (b, c)
+    pub fn into_parts(self) -> (Vec<JoinHandle<T>>, Link, bool) {
+        let (_a, b, c, d) = self._into_parts();
+        (b, c, d)
     }
 
     pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
@@ -324,11 +267,16 @@ impl<T: Send + 'static> ChildPool<T> {
         }
     }
 
-    pub fn abort(&mut self) {
-        self.state.status = SupervisionStatus::Aborted;
+    /// Abort all processes linked to the channel.
+    ///
+    /// Returns true if this is the first time aborting
+    pub fn abort(&mut self) -> bool {
+        let was_aborted = self.is_aborted;
+        self.is_aborted = true;
         for handle in self.handles.as_ref().unwrap() {
             handle.abort()
         }
+        !was_aborted
     }
 
     /// Close the channel.
@@ -367,30 +315,28 @@ impl<T: Send + 'static> ChildPool<T> {
 
     /// Attach the process. Returns true if the process was detached.
     /// before this. Returns an error if the process has already been aborted.
-    pub fn attach(&mut self) -> Result<bool, AlreadyAborted> {
-        self.state.attach()
+    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
+        self.link.attach(duration)
     }
 
     /// Detach the process. Returns true if the process was attached.
     /// before this. Returns an error if the process has already been aborted.
-    pub fn detach(&mut self) -> Result<bool, AlreadyAborted> {
-        self.state.detach()
-    }
-
-    /// Set the abort-timer of the processes linked to this channel.
-    /// Returns the old abort-timer.
-    pub fn set_abort_timer(&mut self, timer: Duration) -> Duration {
-        self.state.set_abort_timer(timer)
+    pub fn detach(&mut self) -> Option<Duration> {
+        self.link.detach()
     }
 
     /// Get a reference to the current supervision-state
-    pub fn state(&self) -> &SupervisionState {
-        &self.state
+    pub fn link(&self) -> &Link {
+        &self.link
     }
 
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
         self.inbox_count() == 0
+    }
+
+    pub fn is_aborted(&self) -> bool {
+        self.is_aborted
     }
 }
 
@@ -418,19 +364,20 @@ impl<T: Send + 'static> Stream for ChildPool<T> {
 
 impl<T: Send + 'static> Drop for ChildPool<T> {
     fn drop(&mut self) {
-        if self.state.status == SupervisionStatus::Attached && self.inbox_count() != 0 {
-            if self.state.abort_timer.is_zero() {
-                self.abort();
-            } else {
-                self.halt_all();
-                let handles = self.handles.take().unwrap();
-                let timer = self.state.abort_timer;
-                tokio::task::spawn(async move {
-                    tokio::time::sleep(timer).await;
-                    for handle in handles {
-                        handle.abort()
-                    }
-                });
+        if let Link::Attached(abort_timer) = self.link {
+            if self.inbox_count() != 0 {
+                if abort_timer.is_zero() {
+                    self.abort();
+                } else {
+                    self.halt_all();
+                    let handles = self.handles.take().unwrap();
+                    tokio::task::spawn(async move {
+                        tokio::time::sleep(abort_timer).await;
+                        for handle in handles {
+                            handle.abort()
+                        }
+                    });
+                }
             }
         }
     }
@@ -464,7 +411,7 @@ impl<T: Send + 'static> DynamicChannel for Channel<T> {
         self.inbox_count()
     }
     fn message_count(&self) -> usize {
-        self.message_count()
+        self.msg_count()
     }
     fn address_count(&self) -> usize {
         self.address_count()

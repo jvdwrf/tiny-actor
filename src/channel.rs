@@ -8,12 +8,16 @@ use std::{
     },
 };
 
+use crate::Capacity;
+
 /// Contains all data that should be shared between addresses and inboxes.
 ///
 /// This is wrapped in an Arc, to allow sharing.
 pub(crate) struct Channel<T> {
     /// The underlying queue
     queue: ConcurrentQueue<T>,
+
+    capacity: Capacity,
 
     /// The amount of addresses associated to this channel
     address_count: AtomicUsize,
@@ -36,13 +40,14 @@ impl<T> Channel<T> {
     pub fn new(
         address_count: usize,
         inbox_count: usize,
-        cap: Option<usize>,
+        capacity: Capacity,
     ) -> Self {
         Self {
-            queue: match cap {
-                Some(size) => ConcurrentQueue::bounded(size),
-                None => ConcurrentQueue::unbounded(),
+            queue: match &capacity {
+                Capacity::Bounded(size) => ConcurrentQueue::bounded(*size),
+                Capacity::Unbounded(_) => ConcurrentQueue::unbounded(),
             },
+            capacity,
             address_count: AtomicUsize::new(address_count),
             inbox_count: AtomicUsize::new(inbox_count),
             recv_event: Event::new(),
@@ -223,7 +228,7 @@ impl<T> Channel<T> {
     }
 
     /// Returns the amount of messages currently in the channel.
-    pub fn message_count(&self) -> usize {
+    pub fn msg_count(&self) -> usize {
         self.queue.len()
     }
 
@@ -235,6 +240,11 @@ impl<T> Channel<T> {
     /// Returns the amount of inboxes this channel has.
     pub fn inbox_count(&self) -> usize {
         self.inbox_count.load(Ordering::Acquire)
+    }
+
+    /// Capacity of the inbox
+    pub fn capacity(&self) -> &Capacity {
+        &self.capacity
     }
 }
 

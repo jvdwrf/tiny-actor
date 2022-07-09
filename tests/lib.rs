@@ -1,11 +1,11 @@
 use std::{collections::HashSet, time::Duration};
 
 use futures::{future::pending, StreamExt};
-use tiny_actor::{spawn, spawn_pooled, Config, Inbox, RecvError};
+use tiny_actor::{spawn, spawn_pooled, BackPressure, Capacity, Config, Inbox, Link, RecvError};
 
 #[tokio::test]
 async fn spawn_and_abort() {
-    let (mut child, _address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {
+    let (mut child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     child.abort();
@@ -14,7 +14,7 @@ async fn spawn_and_abort() {
 
 #[tokio::test]
 async fn spawn_await_address() {
-    let (mut child, address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {
+    let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     child.abort();
@@ -23,19 +23,19 @@ async fn spawn_await_address() {
 
 #[tokio::test]
 async fn spawn_and_panic() {
-    let (child, _address) = spawn(Config::unbounded(), |_: Inbox<()>| async move { panic!() });
+    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move { panic!() });
     assert!(child.await.unwrap_err().is_panic());
 }
 
 #[tokio::test]
 async fn spawn_and_normal_exit() {
-    let (child, _address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {});
+    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {});
     assert!(child.await.is_ok());
 }
 
 #[tokio::test]
 async fn spawn_and_halt() {
-    let (child, _address) = spawn(Config::unbounded(), |mut inbox: Inbox<()>| async move {
+    let (child, _address) = spawn(Config::default(), |mut inbox: Inbox<()>| async move {
         assert_eq!(inbox.recv().await.unwrap_err(), RecvError::Halted);
     });
     child.halt();
@@ -46,9 +46,8 @@ async fn spawn_and_halt() {
 async fn spawn_and_drop() {
     let (child, address) = spawn(
         Config {
-            abort_timer: Duration::from_millis(10),
-            attached: true,
-            capacity: Some(10),
+            link: Link::Attached(Duration::from_millis(10)),
+            capacity: Capacity::Bounded(10),
         },
         |mut inbox: Inbox<()>| async move {
             assert_eq!(inbox.recv().await.unwrap_err(), RecvError::Halted);
@@ -62,11 +61,7 @@ async fn spawn_and_drop() {
 #[tokio::test]
 async fn spawn_and_drop_detached() {
     let (child, address) = spawn(
-        Config {
-            abort_timer: Duration::from_millis(10),
-            attached: false,
-            capacity: Some(10),
-        },
+        Config::new(Link::Detached, Capacity::Unbounded(BackPressure::default())),
         |mut inbox: Inbox<()>| async move {
             assert_eq!(inbox.recv().await.unwrap(), ());
         },
@@ -79,7 +74,7 @@ async fn spawn_and_drop_detached() {
 
 #[tokio::test]
 async fn base_counts() {
-    let (mut child, _address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {
+    let (mut child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     assert_eq!(child.address_count(), 1);
@@ -90,7 +85,7 @@ async fn base_counts() {
 
 #[tokio::test]
 async fn address_counts() {
-    let (mut child, address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {
+    let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     assert_eq!(child.address_count(), 1);
@@ -103,7 +98,7 @@ async fn address_counts() {
 
 #[tokio::test]
 async fn child_to_pool() {
-    let (child, _address) = spawn(Config::unbounded(), |_: Inbox<()>| async move {
+    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     assert_eq!(child.inbox_count(), 1);
@@ -119,7 +114,7 @@ async fn child_to_pool() {
 async fn inbox_counts() {
     let (mut pool, _address) = spawn_pooled(
         0..4,
-        Config::unbounded(),
+        Config::default(),
         |_, mut inbox: Inbox<()>| async move {
             inbox.recv().await.unwrap_err();
         },

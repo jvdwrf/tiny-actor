@@ -11,16 +11,16 @@ I have been trying to figure out the most what the most ergonomic way is to writ
 # Concepts
 
 ## Overview
-```
+```other
 |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
 |                            Channel                          |
 |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
 |  |              Actor                |  |   Child(Pool)  |  |
 |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |  |________________|  |
-|  |  |         Process(es)         |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
-|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |  Address(es)   |  |
-|  |  |  | tokio-task |  | Inbox |  |  |  |________________|  |
-|  |  |  |____________|  |_______|  |  |                      |
+|  |  |         Process(es)         |  |                      |
+|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
+|  |  |  | tokio-task |  | Inbox |  |  |  |  Address(es)   |  |
+|  |  |  |____________|  |_______|  |  |  |________________|  |
 |  |  |_____________________________|  |                      |
 |  |___________________________________|                      |
 |_____________________________________________________________|
@@ -63,6 +63,13 @@ Exit can refer to two seperate events which, with good practise, always occur at
 A `Child` or `ChildPool` has an abort-timer. If the `Child` or `ChildPool` is attached, then it will instantly
 send a `Halt`-signal to all inboxes. Then, after the abort-timer, if the child still has not exited, it will be aborted.
 
+## Capacity
+A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until
+it's capacity has been reached, after reaching the capacity, senders must wait until space is
+available. An unbounded `Channel` does not have this limit, but instead applies a
+backoff-algorithm: The more messages in the `Channel`, the longer the sender must wait before
+it is allowed to send.
+
 # Examples
 
 ## Basic
@@ -71,7 +78,7 @@ use tiny_actor::*;
 
 #[tokio::main]
 async fn main() {
-    let (child, address) = spawn(Config::unbounded(), |mut inbox: Inbox<u32>| async move {
+    let (child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
         loop {
             match inbox.recv().await {
                 Ok(msg) => println!("Received message: {msg}"),
@@ -118,9 +125,12 @@ async fn main() {
     let (pool, address) = spawn_pooled(
         0..3,
         Config {
-            abort_timer: Duration::from_secs(1),
-            attached: true,
-            capacity: Some(5),
+            link: Link::Attached(Duration::from_secs(1)),
+            capacity: Capacity::Unbounded(BackPressure {
+                start_at: 5,
+                base_timeout: Duration::from_nanos(25),
+                growth: Growth::Exponential(1.3),
+            }),
         },
         |i, mut inbox: Inbox<u32>| async move {
             loop {

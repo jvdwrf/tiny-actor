@@ -5,9 +5,16 @@ pub(crate) mod channel;
 pub(crate) mod child;
 pub(crate) mod inbox;
 pub(crate) mod spawning;
+pub(crate) mod config;
+
+use std::time::Duration;
 
 pub use address::*;
 pub(crate) use channel::*;
 pub use child::*;
 pub use inbox::*;
 pub use spawning::*;
+pub use config::*;
+
+
+

@@ -112,7 +112,7 @@ impl<T> Inbox<T> {
 
     /// Get the amount of messages linked to the channel.
     pub fn message_count(&self) -> usize {
-        self.channel.message_count()
+        self.channel.msg_count()
     }
 
     /// Get the amount of addresses linked to the channel.

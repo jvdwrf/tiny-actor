@@ -1,12 +1,13 @@
 use crate::*;
 use concurrent_queue::PushError;
 use event_listener::EventListener;
-use futures::{Future, FutureExt};
+use futures::{pin_mut, Future, FutureExt};
 use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
+use tokio::time::Sleep;
 
 //------------------------------------------------------------------------------------------------
 //  Address
@@ -74,7 +75,7 @@ impl<T> Address<T> {
 
     /// Get the amount of messages linked to the channel.
     pub fn message_count(&self) -> usize {
-        self.channel.message_count()
+        self.channel.msg_count()
     }
 
     /// Get the amount of addresses linked to the channel.
@@ -139,7 +140,12 @@ impl<A> Drop for Address<A> {
 pub struct Snd<'a, T> {
     channel: &'a Channel<T>,
     msg: Option<T>,
-    listener: Option<EventListener>,
+    fut: Option<SndFut>,
+}
+
+pub enum SndFut {
+    Listener(EventListener),
+    Sleep(Pin<Box<Sleep>>),
 }
 
 impl<'a, T> Snd<'a, T> {
@@ -147,7 +153,7 @@ impl<'a, T> Snd<'a, T> {
         Snd {
             channel,
             msg: Some(msg),
-            listener: None,
+            fut: None,
         }
     }
 }
@@ -158,33 +164,72 @@ impl<'a, T> Future for Snd<'a, T> {
     type Output = Result<(), Closed<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut msg = self.msg.take().unwrap();
-
-        loop {
-            msg = match self.channel.push_msg(msg) {
-                Ok(()) => {
-                    return Poll::Ready(Ok(()));
-                }
-                Err(PushError::Closed(msg)) => {
-                    return Poll::Ready(Err(Closed(msg)));
-                }
-                Err(PushError::Full(msg)) => msg,
-            };
-
-            if self.listener.is_none() {
-                self.listener = Some(self.channel.send_listener())
+        fn push_msg<T>(pin: &mut Pin<&mut Snd<'_, T>>) -> Poll<Result<(), address::Closed<T>>> {
+            let msg = pin.msg.take().unwrap();
+            match pin.channel.push_msg(msg) {
+                Ok(()) => Poll::Ready(Ok(())),
+                Err(PushError::Closed(msg)) => Poll::Ready(Err(Closed(msg))),
+                Err(PushError::Full(_msg)) => unreachable!(),
             }
+        }
 
-            match self.listener.as_mut().unwrap().poll_unpin(cx) {
-                Poll::Ready(()) => self.listener = None,
-                Poll::Pending => {
-                    self.msg = Some(msg);
-                    return Poll::Pending;
+        match self.channel.capacity() {
+            Capacity::Bounded(_) => {
+                let mut msg = self.msg.take().unwrap();
+                loop {
+                    msg = match self.channel.push_msg(msg) {
+                        Ok(()) => {
+                            return Poll::Ready(Ok(()));
+                        }
+                        Err(PushError::Closed(msg)) => {
+                            return Poll::Ready(Err(Closed(msg)));
+                        }
+                        Err(PushError::Full(msg)) => msg,
+                    };
+
+                    if self.fut.is_none() {
+                        self.fut = Some(SndFut::Listener(self.channel.send_listener()))
+                    }
+
+                    match self.fut.as_mut().unwrap() {
+                        SndFut::Listener(listener) => match listener.poll_unpin(cx) {
+                            Poll::Ready(()) => self.fut = None,
+                            Poll::Pending => {
+                                self.msg = Some(msg);
+                                return Poll::Pending;
+                            }
+                        },
+                        SndFut::Sleep(_) => unreachable!(),
+                    }
                 }
             }
+            Capacity::Unbounded(backpressure) => match &mut self.fut {
+                Some(SndFut::Sleep(sleep_fut)) => match sleep_fut.poll_unpin(cx) {
+                    Poll::Ready(()) => {
+                        self.fut = None;
+                        push_msg(&mut self)
+                    }
+                    Poll::Pending => Poll::Pending,
+                },
+                Some(SndFut::Listener(_)) => unreachable!(),
+                None => match backpressure.get_timeout(self.channel.msg_count()) {
+                    Some(timeout) => {
+                        let mut sleep_fut = Box::pin(tokio::time::sleep(timeout));
+                        match sleep_fut.poll_unpin(cx) {
+                            Poll::Ready(()) => push_msg(&mut self),
+                            Poll::Pending => {
+                                self.fut = Some(SndFut::Sleep(sleep_fut));
+                                Poll::Pending
+                            }
+                        }
+                    }
+                    None => push_msg(&mut self),
+                },
+            },
         }
     }
 }
+
 
 //------------------------------------------------------------------------------------------------
 //  Errors

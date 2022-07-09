@@ -100,7 +100,7 @@ impl Default for Capacity {
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackPressure {
     pub start_at: usize,
-    pub base_timeout: Duration,
+    pub timeout: Duration,
     pub growth: Growth,
 }
 
@@ -108,7 +108,7 @@ impl Default for BackPressure {
     fn default() -> Self {
         Self {
             start_at: 5,
-            base_timeout: Duration::from_nanos(25),
+            timeout: Duration::from_nanos(25),
             growth: Growth::Exponential(1.3),
         }
     }
@@ -119,7 +119,7 @@ impl BackPressure {
     pub fn disabled() -> Self {
         Self {
             start_at: usize::MAX,
-            base_timeout: Duration::from_secs(0),
+            timeout: Duration::from_nanos(0),
             growth: Growth::Linear,
         }
     }
@@ -130,12 +130,16 @@ impl BackPressure {
                 Growth::Exponential(factor) => {
                     let msg_count_diff = (msg_count - self.start_at).try_into().unwrap_or(i32::MAX);
                     let mult = factor.powi(msg_count_diff);
-                    Some(self.base_timeout.saturating_mul(mult as u32))
+                    let nanos = self.timeout.as_nanos();
+                    Some(Duration::from_nanos((nanos as f32 * mult) as u64))
                 }
-                Growth::Linear => Some(
-                    self.base_timeout
-                        .saturating_mul(msg_count.try_into().unwrap_or(u32::MAX)),
-                ),
+                Growth::Linear => {
+                    let mult = (msg_count - self.start_at + 1) as u64;
+                    let nanos = self.timeout.as_nanos();
+                    Some(Duration::from_nanos(
+                        (nanos * mult as u128).try_into().unwrap_or(u64::MAX),
+                    ))
+                }
             }
         } else {
             None
@@ -149,4 +153,83 @@ pub enum Growth {
     Exponential(f32),
     /// `timeout = base_timeout * (msg_count - start_at)`
     Linear,
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn backpressure_linear() {
+        let back_pressure = BackPressure {
+            start_at: 0,
+            timeout: Duration::from_secs(1),
+            growth: Growth::Linear,
+        };
+
+        assert_eq!(back_pressure.get_timeout(0), Some(Duration::from_secs(1)));
+        assert_eq!(back_pressure.get_timeout(1), Some(Duration::from_secs(2)));
+        assert_eq!(back_pressure.get_timeout(10), Some(Duration::from_secs(11)));
+    }
+
+    #[test]
+    fn backpressure_linear_start_at() {
+        let back_pressure = BackPressure {
+            start_at: 10,
+            timeout: Duration::from_secs(1),
+            growth: Growth::Linear,
+        };
+
+        assert_eq!(back_pressure.get_timeout(0), None);
+        assert_eq!(back_pressure.get_timeout(1), None);
+        assert_eq!(back_pressure.get_timeout(9), None);
+        assert_eq!(back_pressure.get_timeout(10), Some(Duration::from_secs(1)));
+        assert_eq!(back_pressure.get_timeout(11), Some(Duration::from_secs(2)));
+        assert_eq!(back_pressure.get_timeout(20), Some(Duration::from_secs(11)));
+    }
+
+    #[test]
+    fn backpressure_linear_max() {
+        let back_pressure = BackPressure {
+            start_at: usize::MAX,
+            timeout: Duration::from_secs(1),
+            growth: Growth::Linear,
+        };
+
+        assert_eq!(back_pressure.get_timeout(0), None);
+        assert_eq!(back_pressure.get_timeout(1), None);
+        assert_eq!(back_pressure.get_timeout(9), None);
+        assert_eq!(back_pressure.get_timeout(usize::MAX - 1), None);
+        assert_eq!(
+            back_pressure.get_timeout(usize::MAX),
+            Some(Duration::from_secs(1))
+        );
+    }
+
+    #[test]
+    fn backpressure_exponential() {
+        let back_pressure = BackPressure {
+            start_at: 0,
+            timeout: Duration::from_secs(1),
+            growth: Growth::Exponential(1.1),
+        };
+
+        assert_eq!(
+            back_pressure.get_timeout(0),
+            Some(Duration::from_millis(1000))
+        );
+        assert_eq!(
+            back_pressure.get_timeout(1),
+            Some(Duration::from_millis(1100))
+        );
+        assert_eq!(
+            back_pressure.get_timeout(2),
+            Some(Duration::from_millis(1210))
+        );
+        assert_eq!(
+            back_pressure.get_timeout(3),
+            Some(Duration::from_nanos(1331000064))
+        );
+    }
 }

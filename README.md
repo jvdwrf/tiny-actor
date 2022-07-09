@@ -106,6 +106,8 @@ async fn main() {
     address.send(10).await.unwrap();
     address.send(5).await.unwrap();
 
+    tokio::time::sleep(Duration::from_millis(10));
+
     child.halt();
 
     match child.await {
@@ -135,7 +137,7 @@ async fn main() {
             link: Link::Attached(Duration::from_secs(1)),
             capacity: Capacity::Unbounded(BackPressure {
                 start_at: 5,
-                base_timeout: Duration::from_nanos(25),
+                timeout: Duration::from_nanos(25),
                 growth: Growth::Exponential(1.3),
             }),
         },
@@ -163,6 +165,7 @@ async fn main() {
     for num in 0..20 {
         address.send(num).await.unwrap()
     }
+
 
     pool.halt_all();
     let exits: Vec<Result<&str, JoinError>> = pool.collect().await;

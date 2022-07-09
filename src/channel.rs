@@ -153,7 +153,7 @@ impl<T> Channel<T> {
     /// This decrements the halt-counter by one when it is called, therefore every
     /// inbox should only receive true from this method once!
     pub fn inbox_should_halt(&self) -> bool {
-        if self.halt_count.load(Ordering::Relaxed) > 0 {
+        if self.halt_count.load(Ordering::Acquire) > 0 {
             let prev = self.halt_count.fetch_sub(1, Ordering::AcqRel);
             if prev > 0 {
                 return true;

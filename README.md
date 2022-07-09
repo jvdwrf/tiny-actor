@@ -11,44 +11,11 @@ I have been trying to figure out the most what the most ergonomic way is to writ
 # Concepts
 
 ## Channel
-A channel is that which underlies the coupling of inboxes, addresses and children. A channel contains: 
+A `Channel` is that which underlies the coupling of `Inbox`es, `Address`es and `Child`ren. Every channel contains the following structs: 
 * One `Child` or `ChildPool`
 * Zero or more `Address`es
 * Zero or more `Inbox`es
 
-## Inbox
-An `Inbox` refers is the receiver-part of a `Channel`, this is always coupled with a `tokio::task`. The `Inbox` is primarily used to take messages out of the `Channel`. `Inbox`es can only be created by spawning new processes and should stay coupled to the `tokio::task` they were spawned with. Therefore, an `Inbox` should only be dropped when the `tokio::task` is exiting.
-
-## Address
-An `Address` is the cloneable sender-part of a `Channel`. The `Address` is primarily used to send messages to `Inbox`es. When all `Address`es are dropped, the `Channel` is closed automatically. `Address`es can be awaited, which will return when all `Inbox`es linked to the `Channel` have exited.
-
-## Child
-A `Child` is a handle to a `Channel` with a one `Inbox`. The `Child` can be awaited to return the exit-value of the `tokio::task` that has been spawned. A `Child` is non-cloneable, and therefore unique to the `Channel`. When the `Child` is dropped, the attached process will be aborted. This can be prevented by detaching the `Child`. More processes can be spawned later, which transforms the `Child` into a `ChildPool`.
-
-## ChildPool
-A `ChildPool` is similar to a `Child`, except that the `Channel` can have more than one `Inbox`. A `ChildPool` can be streamed to get the exit-values of all spawned `tokio::task`s.
-
-## Closing
-When a `Channel` is closed, it is not longer possible to send new messages into it. It is still possible to take out any messages that are remaining. A channel that is closed does not have to exit afterwards. Any senders are notified with a `SendError::Closed`. Receivers will receive `RecvError::ClosedAndEmpty` once the channel has been emptied.
-
-## Halting
-An `Inbox` can be halted exactly once. When receiving a `RecvError::Halted` the process should exit. A `Channel` can be partially halted, meaning that only some of the `Inbox`es have been halted.
-
-## Aborting
-A process can be aborted through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method.This causes the process to exit abruptly, and can leave bad state behind. Wherever possible, use halt instead of abort. By default, a spawned process is automatically aborted when the `Child` is dropped. This can be prevented by detaching a `Child`.
-
-## Exiting
-Exit can refer to two seperate events which, with good practise, always occur at the same time:
-* An `Inbox` can exit by being dropped. Once all `Inbox`es of a `Channel` have been dropped, the `Channel` itself has exited. This type of exit can be retrieved/awaited from the `Channel` at any time.
-* A `tokio::task` can exit, which means the process is no longer alive. This can only be queried only once, by awaiting the `Child` or `ChildPool` Therefore, it is recommended to drop an `Inbox` only when the process itself is also exiting. This way, an exit always refers to the same event.
-
-## Abort-timer
-A `Child` or `ChildPool` has an abort-timer. If the `Child` or `ChildPool` is attached, then it will instantly send a `Halt`-signal to all inboxes. Then, after the abort-timer, if the child still has not exited, it will be aborted.
-
-## Capacity
-A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until it's capacity has been reached, after reaching the capacity, senders must wait until space is available. An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send.
-
-## Overview
 ```other
 |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
 |                            Channel                          |
@@ -63,6 +30,52 @@ A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive 
 |  |___________________________________|                      |
 |_____________________________________________________________|
 ```
+
+## Actor
+The term `Actor` is used to describe (multiple) `Process`es sharing a single `Channel`. The `Actor` appears to be functioning as a single unit to other `Process`es sending messages to it through it's `Address`.
+
+## Process
+The term `Process` is used to describe the coupling of an `Inbox` with a `tokio::task`. 
+
+## Inbox
+An `Inbox` is a receiver-part of the `Channel`, and is primarily used to take messages out of the `Channel`. `Inbox`es can only be created by spawning new `Process`es and should stay coupled to the `tokio::task` they were spawned with. Therefore, an `Inbox` should only be dropped when the `tokio::task` is exiting.
+
+## Address
+An `Address` is the cloneable sender-part of a `Channel`, and is primarily used to send messages to the `Actor`. When all `Address`es are dropped, the `Channel` is closed automatically. `Address`es can be awaited, which will return when the `Actor` has exited.
+
+## Child
+A `Child` is a handle to an `Actor` with a single `Process`. A `Child` can be awaited to return the exit-value of the `tokio::task`. A `Child` is non-cloneable, and therefore unique to the `Channel`. When the `Child` is dropped, the `Actor` will be `halt`ed and `abort`ed. This can be prevented by detaching the `Child`. More processes can be spawned later, which transforms the `Child` into a `ChildPool`.
+
+## ChildPool
+A `ChildPool` is similar to a `Child`, except that the `Actor` can have more than one `Process`. A `ChildPool` can be streamed to get the exit-values of all spawned `tokio::task`s.
+
+## Closing
+When a `Channel` is closed, it is not longer possible to send new messages into it. It is still possible to take out any messages that are left. The processes of a closed `Channel` do not have to exit necessarily. Any senders are notified with a `SendError::Closed`, while receivers will receive `RecvError::ClosedAndEmpty` once the `Channel` has been emptied.
+
+## Halting
+A `Process` can be `halt`ed exactly once, by receiving a `RecvError::Halted`. Afterwards the `Process` should exit. An `Actor` can be partially halted, meaning that only some of the `Processes`es have been `halt`ed.
+
+## Aborting
+An `Actor` can be `abort`ed through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tokio::task`s to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`. By default `Process`es are automatically aborted when the `Child/ChildGroup` is dropped. This can be prevented by detaching the `Child/ChildGroup`.
+
+## Exiting
+Exit can refer to two seperate events which, with good practise, always occur at the same time:
+* A `Process` can exit by dropping it's `Inbox`. Once all `Inbox`es of a `Channel` have been dropped, the `Actor` has exited. This type of exit can be retrieved/awaited from the `Channel` at any time.
+* A `tokio::task` can exit, which means the process is no longer alive. This can only be queried only once, by awaiting the `Child` or `ChildPool` 
+
+Therefore, it is recommended to drop an `Inbox` only when the `tokio::task` is also exiting. This way, an exit always refers to the same event.
+
+## Abort-timer
+If an `Actor` is attached, the `Child/ChildPool` has an `abort-timer`. Upon dropping the `Child/ChildPool` instantly a `Halt`-signal is sent to all inboxes. After the `abort-timer`, if the `tokio::task` still has not exited, the `Actor` is `abort`ed.
+
+## Capacity
+A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until it's capacity has been reached. After reaching the capacity, senders must wait until space is available. An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send. 
+
+## Default Config
+* `Attached` with an abort-timer of `1 sec`. 
+* `Unbounded` capacity with BackPressure timeout starting from `5 messages` at `25ns` with an `exponential` growth-factor of `1.3`.
+
+
 
 # Examples
 

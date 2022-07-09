@@ -90,7 +90,7 @@ impl<T: Send + 'static> Child<T> {
                     channel: channel,
                     handles: Some(vec![old_handle, new_handle]),
                     link,
-                    is_aborted: is_aborted
+                    is_aborted: is_aborted,
                 })
             }
             None => Err(TrySpawnError::Exited((self, fun))),
@@ -157,6 +157,11 @@ impl<T: Send + 'static> Child<T> {
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
         self.inbox_count() == 0
+    }
+
+    /// Get the capacity of the channel.
+    pub fn capacity(&self) -> &Capacity {
+        self.channel.capacity()
     }
 
     pub fn is_aborted(&self) -> bool {
@@ -338,6 +343,11 @@ impl<T: Send + 'static> ChildPool<T> {
     pub fn is_aborted(&self) -> bool {
         self.is_aborted
     }
+
+    /// Get the capacity of the channel.
+    pub fn capacity(&self) -> &Capacity {
+        self.channel.capacity()
+    }
 }
 
 impl<T: Send + 'static> Stream for ChildPool<T> {
@@ -395,6 +405,7 @@ pub(crate) trait DynamicChannel: Send + 'static {
     fn message_count(&self) -> usize;
     fn address_count(&self) -> usize;
     fn is_closed(&self) -> bool;
+    fn capacity(&self) -> &Capacity;
 }
 
 impl<T: Send + 'static> DynamicChannel for Channel<T> {
@@ -418,6 +429,10 @@ impl<T: Send + 'static> DynamicChannel for Channel<T> {
     }
     fn is_closed(&self) -> bool {
         self.is_closed()
+    }
+    /// Get the capacity of the channel.
+    fn capacity(&self) -> &Capacity {
+        self.capacity()
     }
 }
 

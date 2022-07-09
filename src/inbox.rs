@@ -58,9 +58,18 @@ impl<T> Inbox<T> {
         Rcv { inbox: self }
     }
 
-    /// Try to send a message into the channel.
+    /// Try to send a message into the channel:
+    /// `unbounded` -> fails if backoff has timeout
+    /// `bounded` -> fails if full
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        Ok(self.channel.push_msg(msg)?)
+        self.channel.try_send(msg)
+    }
+
+    /// Try to send a message into the channel:
+    /// `unbounded` -> always succeeds
+    /// `bounded` -> fails if full
+    pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
+        self.channel.send_now(msg)
     }
 
     /// Send a message into the channel.
@@ -123,6 +132,11 @@ impl<T> Inbox<T> {
     /// Whether the channel has been closed.
     pub fn is_closed(&self) -> bool {
         self.channel.is_closed()
+    }
+
+    /// Get the capacity of the channel.
+    pub fn capacity(&self) -> &Capacity {
+        self.channel.capacity()
     }
 
     /// Clone, for use within the crate.

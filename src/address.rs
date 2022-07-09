@@ -26,31 +26,28 @@ impl<T> Address<T> {
         }
     }
 
-    /// Try to send a message into the channel.
+    /// Try to send a message into the channel:
+    /// `unbounded` -> fails if backoff has timeout
+    /// `bounded` -> fails if full
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
-        Ok(self.channel.push_msg(msg)?)
+        self.channel.try_send(msg)
+    }
+
+    /// Try to send a message into the channel:
+    /// `unbounded` -> always succeeds
+    /// `bounded` -> fails if full
+    pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
+        self.channel.send_now(msg)
     }
 
     /// Send a message into the channel.
     pub fn send(&self, msg: T) -> Snd<'_, T> {
-        Snd::new(&self.channel, msg)
+        self.channel.send(msg)
     }
 
     /// Send a message into the channel while blocking the scheduler.
-    pub fn send_blocking(&self, mut msg: T) -> Result<(), Closed<T>> {
-        loop {
-            msg = match self.channel.push_msg(msg) {
-                Ok(()) => {
-                    return Ok(());
-                }
-                Err(PushError::Closed(msg)) => {
-                    return Err(Closed(msg));
-                }
-                Err(PushError::Full(msg)) => msg,
-            };
-
-            self.channel.send_listener().wait();
-        }
+    pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
+        self.channel.send_blocking(msg)
     }
 
     /// Close the channel.
@@ -74,7 +71,7 @@ impl<T> Address<T> {
     }
 
     /// Get the amount of messages linked to the channel.
-    pub fn message_count(&self) -> usize {
+    pub fn msg_count(&self) -> usize {
         self.channel.msg_count()
     }
 
@@ -91,6 +88,11 @@ impl<T> Address<T> {
     /// Whether all inboxes linked to this channel have exited.
     pub fn has_exited(&self) -> bool {
         self.inbox_count() == 0
+    }
+
+    /// Get the capacity of the channel.
+    pub fn capacity(&self) -> &Capacity {
+        self.channel.capacity()
     }
 }
 
@@ -161,14 +163,16 @@ impl<'a, T> Snd<'a, T> {
 impl<'a, T> Unpin for Snd<'a, T> {}
 
 impl<'a, T> Future for Snd<'a, T> {
-    type Output = Result<(), Closed<T>>;
+    type Output = Result<(), SendError<T>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        fn push_msg<T>(pin: &mut Pin<&mut Snd<'_, T>>) -> Poll<Result<(), address::Closed<T>>> {
+        fn poll_push_msg<T>(
+            pin: &mut Pin<&mut Snd<'_, T>>,
+        ) -> Poll<Result<(), address::SendError<T>>> {
             let msg = pin.msg.take().unwrap();
             match pin.channel.push_msg(msg) {
                 Ok(()) => Poll::Ready(Ok(())),
-                Err(PushError::Closed(msg)) => Poll::Ready(Err(Closed(msg))),
+                Err(PushError::Closed(msg)) => Poll::Ready(Err(SendError(msg))),
                 Err(PushError::Full(_msg)) => unreachable!(),
             }
         }
@@ -182,7 +186,7 @@ impl<'a, T> Future for Snd<'a, T> {
                             return Poll::Ready(Ok(()));
                         }
                         Err(PushError::Closed(msg)) => {
-                            return Poll::Ready(Err(Closed(msg)));
+                            return Poll::Ready(Err(SendError(msg)));
                         }
                         Err(PushError::Full(msg)) => msg,
                     };
@@ -207,7 +211,7 @@ impl<'a, T> Future for Snd<'a, T> {
                 Some(SndFut::Sleep(sleep_fut)) => match sleep_fut.poll_unpin(cx) {
                     Poll::Ready(()) => {
                         self.fut = None;
-                        push_msg(&mut self)
+                        poll_push_msg(&mut self)
                     }
                     Poll::Pending => Poll::Pending,
                 },
@@ -216,20 +220,19 @@ impl<'a, T> Future for Snd<'a, T> {
                     Some(timeout) => {
                         let mut sleep_fut = Box::pin(tokio::time::sleep(timeout));
                         match sleep_fut.poll_unpin(cx) {
-                            Poll::Ready(()) => push_msg(&mut self),
+                            Poll::Ready(()) => poll_push_msg(&mut self),
                             Poll::Pending => {
                                 self.fut = Some(SndFut::Sleep(sleep_fut));
                                 Poll::Pending
                             }
                         }
                     }
-                    None => push_msg(&mut self),
+                    None => poll_push_msg(&mut self),
                 },
             },
         }
     }
 }
-
 
 //------------------------------------------------------------------------------------------------
 //  Errors
@@ -253,4 +256,4 @@ impl<T> From<PushError<T>> for TrySendError<T> {
 
 /// The channel has been closed.
 #[derive(Debug, Clone)]
-pub struct Closed<T>(T);
+pub struct SendError<T>(pub T);

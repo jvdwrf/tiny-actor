@@ -17,18 +17,18 @@ A `Channel` is that which underlies the coupling of `Inbox`es, `Address`es and `
 * Zero or more `Inbox`es
 
 ```other
-|¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|
-|                            Channel                          |
-|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
-|  |              Actor                |  |   Child(Pool)  |  |
-|  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |  |________________|  |
-|  |  |         Process(es)         |  |                      |
-|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯|  |¯¯¯¯¯¯¯|  |  |  |¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯¯|  |
-|  |  |  | tokio-task |  | Inbox |  |  |  |  Address(es)   |  |
-|  |  |  |____________|  |_______|  |  |  |________________|  |
-|  |  |_____________________________|  |                      |
-|  |___________________________________|                      |
-|_____________________________________________________________|
+╭─────────────────────────────────────────────────────────────╮
+│                            Channel                          │
+│  ╭───────────────────────────────────╮  ╭────────────────╮  │
+│  │               Actor               │  │   Child(Pool)  │  │
+│  │  ╭─────────────────────────────╮  │  ╰────────────────╯  │
+│  │  │         Process(es)         │  │                      │
+│  │  │  ╭────────────╮  ╭───────╮  │  │  ╭────────────────╮  │
+│  │  │  │ tokio-task │  │ Inbox │  │  │  │  Address(es)   │  │
+│  │  │  ╰────────────╯  ╰───────╯  │  │  ╰────────────────╯  │
+│  │  ╰─────────────────────────────╯  │                      │
+│  ╰───────────────────────────────────╯                      │
+╰─────────────────────────────────────────────────────────────╯
 ```
 
 ## Actor
@@ -117,8 +117,8 @@ async fn main() {
             println!("Actor exited with message: {exit}")
         },
         Err(error) => match error {
-            JoinError::Panic(_) => todo!(),
-            JoinError::Abort => todo!(),
+            ExitError::Panic(_) => todo!(),
+            ExitError::Abort => todo!(),
         },
     }
 }
@@ -163,13 +163,12 @@ async fn main() {
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    for num in 0..20 {
+    for num in 0..10 {
         address.send(num).await.unwrap()
     }
 
-
     pool.halt_all();
-    let exits: Vec<Result<&str, JoinError>> = pool.collect().await;
+    let exits = pool.collect::<Vec<_>>().await;
 
     for exit in exits {
         match exit {
@@ -178,8 +177,8 @@ async fn main() {
                 println!("Actor exited with message: {exit}")
             }
             Err(error) => match error {
-                JoinError::Panic(_) => todo!(),
-                JoinError::Abort => todo!(),
+                ExitError::Panic(_) => todo!(),
+                ExitError::Abort => todo!(),
             },
         }
     }

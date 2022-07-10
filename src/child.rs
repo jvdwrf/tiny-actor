@@ -180,7 +180,7 @@ impl<T: Send + 'static> Drop for Child<T> {
 }
 
 impl<T: Send + 'static> Future for Child<T> {
-    type Output = Result<T, JoinError>;
+    type Output = Result<T, ExitError>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
@@ -364,7 +364,7 @@ impl<T: Send + 'static> ChildPool<T> {
 }
 
 impl<T: Send + 'static> Stream for ChildPool<T> {
-    type Item = Result<T, JoinError>;
+    type Item = Result<T, ExitError>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -458,34 +458,34 @@ impl<T: Send + 'static> DynamicChannel for Channel<T> {
 //------------------------------------------------------------------------------------------------
 
 #[derive(Debug, thiserror::Error)]
-pub enum JoinError {
+pub enum ExitError {
     #[error("Child has panicked")]
     Panic(Box<dyn Any + Send>),
     #[error("Child has been aborted")]
     Abort,
 }
 
-impl JoinError {
+impl ExitError {
     pub fn is_panic(&self) -> bool {
         match self {
-            JoinError::Panic(_) => true,
-            JoinError::Abort => false,
+            ExitError::Panic(_) => true,
+            ExitError::Abort => false,
         }
     }
 
     pub fn is_abort(&self) -> bool {
         match self {
-            JoinError::Panic(_) => false,
-            JoinError::Abort => true,
+            ExitError::Panic(_) => false,
+            ExitError::Abort => true,
         }
     }
 }
 
-impl From<tokio::task::JoinError> for JoinError {
+impl From<tokio::task::JoinError> for ExitError {
     fn from(e: tokio::task::JoinError) -> Self {
         match e.try_into_panic() {
-            Ok(panic) => JoinError::Panic(panic),
-            Err(_) => JoinError::Abort,
+            Ok(panic) => ExitError::Panic(panic),
+            Err(_) => ExitError::Abort,
         }
     }
 }

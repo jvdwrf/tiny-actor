@@ -154,6 +154,7 @@ impl<T> Channel<T> {
     /// This decrements the halt-counter by one when it is called, therefore every
     /// inbox should only receive true from this method once!
     pub fn inbox_should_halt(&self) -> bool {
+        // todo: test this
         if self.halt_count.load(Ordering::Acquire) > 0 {
             let prev = self.halt_count.fetch_sub(1, Ordering::AcqRel);
             if prev > 0 {
@@ -200,6 +201,7 @@ impl<T> Channel<T> {
     /// # Notifies
     /// Notifies `n` inboxes.
     pub fn halt_n(&self, n: u32) {
+        // todo: test this
         let n = i32::try_from(n).unwrap_or(i32::MAX);
 
         self.halt_count
@@ -307,9 +309,9 @@ mod test {
     }
 
     #[test]
-    fn closing_channel() {
+    fn closing() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
-        let listeners = Listeners::new(&channel);
+        let listeners = Listeners::size_10(&channel);
 
         channel.close();
 
@@ -327,7 +329,7 @@ mod test {
     #[test]
     fn no_more_senders_remaining() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
-        let listeners = Listeners::new(&channel);
+        let listeners = Listeners::size_10(&channel);
 
         channel.remove_address();
 
@@ -345,9 +347,9 @@ mod test {
     }
 
     #[test]
-    fn no_more_receivers_remaining() {
+    fn exiting() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
-        let listeners = Listeners::new(&channel);
+        let listeners = Listeners::size_10(&channel);
 
         channel.remove_inbox();
 
@@ -403,7 +405,7 @@ mod test {
     #[test]
     fn sending_notifies() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
-        let listeners = Listeners::new(&channel);
+        let listeners = Listeners::size_10(&channel);
         channel.push_msg(()).unwrap();
 
         listeners.assert_notified(Assert {
@@ -417,7 +419,7 @@ mod test {
     fn recveiving_notifies() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         channel.push_msg(()).unwrap();
-        let listeners = Listeners::new(&channel);
+        let listeners = Listeners::size_10(&channel);
         channel.take_next_msg().unwrap();
 
         listeners.assert_notified(Assert {
@@ -440,7 +442,7 @@ mod test {
     }
 
     impl Listeners {
-        fn new<T>(channel: &Channel<T>) -> Self {
+        fn size_10<T>(channel: &Channel<T>) -> Self {
             Self {
                 recv: (0..10)
                     .into_iter()

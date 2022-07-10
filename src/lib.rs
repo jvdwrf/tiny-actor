@@ -7,8 +7,6 @@ pub(crate) mod inbox;
 pub(crate) mod spawning;
 pub(crate) mod config;
 
-use std::time::Duration;
-
 pub use address::*;
 pub(crate) use channel::*;
 pub use child::*;

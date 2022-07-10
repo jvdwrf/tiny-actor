@@ -245,7 +245,7 @@ impl<T> Channel<T> {
     }
 
     /// Whether all inboxes linked to this channel have exited.
-    pub fn has_exited(&self) -> bool {
+    pub fn inboxes_exited(&self) -> bool {
         self.inbox_count.load(Ordering::Acquire) == 0
     }
 }
@@ -316,7 +316,7 @@ mod test {
         channel.close();
 
         assert!(channel.is_closed());
-        assert!(!channel.has_exited());
+        assert!(!channel.inboxes_exited());
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
         assert_eq!(channel.take_next_msg(), Err(()));
         listeners.assert_notified(Assert {
@@ -334,7 +334,7 @@ mod test {
         channel.remove_address();
 
         assert!(channel.is_closed());
-        assert!(!channel.has_exited());
+        assert!(!channel.inboxes_exited());
         assert_eq!(channel.address_count(), 0);
         assert_eq!(channel.inbox_count(), 1);
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
@@ -354,7 +354,7 @@ mod test {
         channel.remove_inbox();
 
         assert!(channel.is_closed());
-        assert!(channel.has_exited());
+        assert!(channel.inboxes_exited());
         assert_eq!(channel.inbox_count(), 0);
         assert_eq!(channel.address_count(), 1);
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));

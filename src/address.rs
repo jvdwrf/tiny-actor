@@ -84,14 +84,14 @@ impl<T> Address<T> {
         self.channel.address_count()
     }
 
-    /// Whether the channel has been closed.
+    /// Whether the channel is been closed.
     pub fn is_closed(&self) -> bool {
         self.channel.is_closed()
     }
 
-    /// Whether all inboxes linked to this channel have exited.
-    pub fn has_exited(&self) -> bool {
-        self.channel.has_exited()
+    /// Whether all `Inbox`es have exited.
+    pub fn exited(&self) -> bool {
+        self.channel.inboxes_exited()
     }
 
     /// Get the capacity of the channel.
@@ -106,7 +106,7 @@ impl<T> Future for Address<T> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        if self.channel.has_exited() {
+        if self.channel.inboxes_exited() {
             Poll::Ready(())
         } else {
             if self.exit_listener.is_none() {
@@ -114,7 +114,7 @@ impl<T> Future for Address<T> {
             }
             match self.exit_listener.as_mut().unwrap().poll_unpin(cx) {
                 Poll::Ready(()) => {
-                    assert!(self.has_exited());
+                    assert!(self.exited());
                     self.exit_listener = None;
                     Poll::Ready(())
                 }
@@ -150,7 +150,7 @@ pub struct Snd<'a, T> {
     fut: Option<SndFut>,
 }
 
-pub enum SndFut {
+enum SndFut {
     Listener(EventListener),
     Sleep(Pin<Box<Sleep>>),
 }

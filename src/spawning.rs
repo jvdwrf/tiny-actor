@@ -32,7 +32,7 @@ where
 /// and [Address]. The `Process` is spawned with a single [Inbox].
 /// 
 /// # Example
-/// ```no_run
+/// ```rust
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {
@@ -68,7 +68,7 @@ where
 /// Every process get's access to a single item within the iterator as it's first argument.
 /// 
 /// # Example
-/// ```no_run
+/// ```rust
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {

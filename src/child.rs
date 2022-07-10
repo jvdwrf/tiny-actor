@@ -3,16 +3,6 @@ use futures::{Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SupervisionStatus {
-    Attached,
-    Detached,
-    Aborted,
-}
-
-#[derive(Debug, Clone)]
-pub struct AlreadyAborted;
-
 //------------------------------------------------------------------------------------------------
 //  Child
 //------------------------------------------------------------------------------------------------
@@ -154,9 +144,9 @@ impl<T: Send + 'static> Child<T> {
         &self.link
     }
 
-    /// Whether all inboxes linked to this channel have exited.
-    pub fn has_exited(&self) -> bool {
-        self.channel.has_exited()
+    /// Whether the `tokio::task` has exited.
+    pub fn exited(&self) -> bool {
+        self.handle.as_ref().unwrap().is_finished()
     }
 
     /// Get the capacity of the channel.
@@ -164,7 +154,8 @@ impl<T: Send + 'static> Child<T> {
         self.channel.capacity()
     }
 
-    pub fn is_aborted(&self) -> bool {
+    /// Whether the `Actor` has been aborted.
+    pub fn aborted(&self) -> bool {
         self.is_aborted
     }
 }
@@ -172,7 +163,7 @@ impl<T: Send + 'static> Child<T> {
 impl<T: Send + 'static> Drop for Child<T> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if !self.is_aborted && !self.has_exited() {
+            if !self.is_aborted && !self.exited() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
@@ -335,12 +326,34 @@ impl<T: Send + 'static> ChildPool<T> {
         &self.link
     }
 
-    /// Whether all inboxes linked to this channel have exited.
-    pub fn has_exited(&self) -> bool {
-        self.channel.has_exited()
+    /// Whether all `tokio::tasks` have exited.
+    pub fn exited(&self) -> bool {
+        self.handles
+            .as_ref()
+            .unwrap()
+            .iter()
+            .all(|handle| handle.is_finished())
     }
 
-    pub fn is_aborted(&self) -> bool {
+    /// The amount of `tokio::task`s that are still alive
+    pub fn task_count(&self) -> usize {
+        self.handles
+            .as_ref()
+            .unwrap()
+            .iter()
+            .filter(|handle| !handle.is_finished())
+            .collect::<Vec<_>>()
+            .len()
+    }
+
+    /// The amount of `Child`ren in this `ChildPool`. This included both alive and
+    /// dead processes.
+    pub fn child_count(&self) -> usize {
+        self.handles.as_ref().unwrap().len()
+    }
+
+    /// Whether the `Actor` has been aborted.
+    pub fn aborted(&self) -> bool {
         self.is_aborted
     }
 
@@ -375,7 +388,7 @@ impl<T: Send + 'static> Stream for ChildPool<T> {
 impl<T: Send + 'static> Drop for ChildPool<T> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if !self.is_aborted && !self.has_exited() {
+            if !self.is_aborted && !self.exited() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
@@ -436,7 +449,7 @@ impl<T: Send + 'static> DynamicChannel for Channel<T> {
         self.capacity()
     }
     fn has_exited(&self) -> bool {
-        self.has_exited()
+        self.inboxes_exited()
     }
 }
 

@@ -2,32 +2,6 @@ use crate::*;
 use futures::Future;
 use std::{sync::Arc};
 
-/// [spawn] with [Config::default].
-pub fn spawn_default<T, R, Fun, Fut>(fun: Fun) -> (Child<R>, Address<T>)
-where
-    Fun: FnOnce(Inbox<T>) -> Fut + Send + 'static,
-    Fut: Future<Output = R> + Send + 'static,
-    R: Send + 'static,
-    T: Send + 'static,
-{
-    spawn(Config::default(), fun)
-}
-
-/// [spawn_pooled] with [Config::default].
-pub fn spawn_default_pooled<T, R, I, Fun, Fut>(
-    iter: impl IntoIterator<Item = I>,
-    fun: Fun,
-) -> (ChildPool<R>, Address<T>)
-where
-    Fun: FnOnce(I, Inbox<T>) -> Fut + Send + 'static + Clone,
-    Fut: Future<Output = R> + Send + 'static,
-    R: Send + 'static,
-    T: Send + 'static,
-    I: Send + 'static,
-{
-    spawn_pooled(iter, Config::default(), fun)
-}
-
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].
 /// 
@@ -100,7 +74,7 @@ where
 
     for i in iterator {
         let fun = fun.clone();
-        let inbox = inbox.clone_inbox();
+        let inbox = inbox._clone();
         let handle = tokio::task::spawn(async move { fun(i, inbox).await });
         handles.push(handle);
     }

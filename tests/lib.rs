@@ -74,12 +74,12 @@ async fn spawn_and_drop_detached() {
 
 #[tokio::test]
 async fn base_counts() {
-    let (mut child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
+    let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
     assert_eq!(child.address_count(), 1);
-    assert_eq!(child.inbox_count(), 1);
-    assert_eq!(child.message_count(), 0);
+    assert_eq!(address.inbox_count(), 1);
+    assert_eq!(address.msg_count(), 0);
     child.abort();
 }
 
@@ -98,10 +98,10 @@ async fn address_counts() {
 
 #[tokio::test]
 async fn child_to_pool() {
-    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
+    let (child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
     });
-    assert_eq!(child.inbox_count(), 1);
+    assert_eq!(address.inbox_count(), 1);
     let pool = child
         .try_spawn(|mut inbox: Inbox<()>| async move {
             inbox.recv().await.unwrap_err();

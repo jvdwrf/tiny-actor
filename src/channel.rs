@@ -1,40 +1,44 @@
+use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use el::{Event, EventListener};
 use event_listener as el;
-use std::sync::{
+use std::{sync::{
     atomic::{AtomicI32, AtomicUsize, Ordering},
     Arc,
-};
+}, any::Any};
 
-use crate::*;
-
-/// Contains all data that should be shared between addresses and inboxes.
-///
-/// This is wrapped in an Arc, to allow sharing.
+/// Contains all data that should be shared between Addresses, Inboxes and the Child.
+/// This is wrapped in an Arc to allow sharing between them.
 pub(crate) struct Channel<T> {
     /// The underlying queue
     queue: ConcurrentQueue<T>,
     /// The capacity of the channel
     capacity: Capacity,
 
-    /// The amount of addresses associated to this channel
+    /// The amount of addresses associated to this channel.
+    /// Once this is 0, not more addresses can be created and the Channel is closed.
     address_count: AtomicUsize,
-    /// The amount of inboxes associated to this channel
+    /// The amount of inboxes associated to this channel.
+    /// Once this is 0, it is impossible to spawn new processes, and the Channel.
+    /// has exited.
     inbox_count: AtomicUsize,
 
-    /// Notified whenever there might be a new message or signal.
+    /// Subscribe when trying to receive a message from this channel.
     recv_event: Event,
-    /// Notified whenever there is more space to send.
+    /// Subscribe when trying to send a message into this channel.
     send_event: Event,
-    /// Notified whenever all processes have exited.
+    /// Subscribe when waiting for Actor to exit.
     exit_event: Event,
 
     /// The amount of processes that should still be halted.
+    /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
 }
 
 impl<T> Channel<T> {
     /// Create a new channel, given an address count, inbox_count and capacity.
+    ///
+    /// After this, it must be ensured that the correct amount of inboxes and addresses actually exist.
     pub fn new(address_count: usize, inbox_count: usize, capacity: Capacity) -> Self {
         Self {
             queue: match &capacity {
@@ -51,19 +55,21 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Add an extra inbox to the channel, this sets the inbox-count +1.
+    /// Add an inbox to the channel, incrementing inbox-count by 1. Afterwards,
+    /// a new Inbox may be created from this channel.
     ///
     /// ## Panics
-    /// Panics if `inbox-count < 1`
+    /// * `prev-inbox-count == 0`
     pub fn add_inbox(&self) {
         let prev_count = self.inbox_count.fetch_add(1, Ordering::AcqRel);
-        assert!(prev_count > 0);
+        assert!(prev_count != 0);
     }
 
-    /// Add an extra inbox to the channel, this sets the inbox-count +1.
-    /// False if `inbox-count < 1`, and does not modify the inbox-count.
+    /// Try to add an inbox to the channel, incrementing inbox-count by 1. Afterwards,
+    /// a new Inbox may be created from this channel.
     ///
-    /// This method is slower than add_inbox.
+    /// Whereas `add_inbox()` panics if `prev-inbox-count == 0`, this method returns an error instead.
+    /// This method is slower than add_inbox, since it uses `fetch-update` on the inbox-count.
     pub fn try_add_inbox(&self) -> Result<(), ()> {
         let result = self
             .inbox_count
@@ -81,56 +87,95 @@ impl<T> Channel<T> {
         }
     }
 
-    /// Remove an inbox from the channel, this sets the inbox-count -1.
+    /// Remove an Inbox from the channel, decrementing inbox-count by 1. This should be
+    /// called during the Inbox's destructor.
     ///
-    /// If there are no more inboxes remaining, this will close the channel and set
+    /// If there are no more Inboxes remaining, this will close the channel and set
     /// `inboxes_dropped` to true. This will also drop any messages still inside the
     /// channel.
     ///
     /// ## Notifies
-    /// All listeners, if the inbox-count dropped to 0.
+    /// * `prev-inbox-count == 1` -> all exit-listeners
     ///
     /// ## Panics
-    /// Panics if `inbox-count < 1`
+    /// * `prev-inbox-count == 0`
     pub fn remove_inbox(&self) {
         // Subtract one from the inbox count
-        let prev_inbox_count = self.inbox_count.fetch_sub(1, Ordering::AcqRel);
-        assert!(prev_inbox_count >= 1);
+        let prev_count = self.inbox_count.fetch_sub(1, Ordering::AcqRel);
+        assert!(prev_count != 0);
 
         // If previous count was 1, then all inboxes have been dropped.
-        if prev_inbox_count == 1 {
+        if prev_count == 1 {
             self.close();
             // Also notify the exit-listeners, since the process exited.
-            self.notify_exit_listeners(usize::MAX);
+            self.exit_event.notify(usize::MAX);
             // drop all messages, since no more inboxes exist.
             while self.take_next_msg().is_ok() {}
         }
     }
 
-    /// Add an extra address to the channel, this sets address-count +1.
+    /// Add an Address to the channel, incrementing address-count by 1. Afterwards,
+    /// a new Address may be created from this channel.
     ///
     /// ## Panics
-    /// Panics if `address-count < 1`
+    /// `prev-address-count == 0`
     pub fn add_address(self: &Arc<Self>) {
         let prev_count = self.address_count.fetch_add(1, Ordering::AcqRel);
-        assert!(prev_count > 0);
+        assert!(prev_count != 0);
     }
 
-    /// Remove an address from the channel. this will set address-count -1.
+    /// Remove an Address from the channel, decrementing address-count by 1. This should
+    /// be called from the destructor of the Address.
     ///
     /// ## Notifies
-    /// Notifies all inboxes if there are no more addresses remaining.
+    /// * `prev-address-count == 1` -> all send_listeners & recv_listeners
     ///
     /// ## Panics
-    /// Panics if `address-count < 1`
+    /// * `prev-address-count == 0`
     pub fn remove_address(&self) {
         // Subtract one from the inbox count
         let prev_address_count = self.address_count.fetch_sub(1, Ordering::AcqRel);
         assert!(prev_address_count >= 1);
 
+        // If previous count was 1, then we can close the channel
         if prev_address_count == 1 {
-            // If previous count was 1, then we can close the channel
+            // This notifies senders and receivers
             self.close();
+        }
+    }
+
+    /// Takes the next message out of the channel.
+    ///
+    /// Returns an error if the queue is closed, returns none if there is no message
+    /// in the queue.
+    ///
+    /// ## Notifies
+    /// on success -> 1 send_listener & 1 recv_listener
+    pub fn take_next_msg(&self) -> Result<Option<T>, ()> {
+        match self.queue.pop() {
+            Ok(msg) => {
+                self.send_event.notify(1);
+                self.recv_event.notify(1);
+                Ok(Some(msg))
+            }
+            Err(PopError::Empty) => Ok(None),
+            Err(PopError::Closed) => Err(()),
+        }
+    }
+
+    /// Push a message into the channel.
+    ///
+    /// Can fail either because the queue is full, or because it is closed.
+    ///
+    /// ## Notifies
+    /// on success -> 1 recv_listener
+    pub fn push_msg(&self, msg: T) -> Result<(), PushError<T>> {
+        match self.queue.push(msg) {
+            Ok(()) => {
+                self.recv_event.notify(1);
+                Ok(())
+            }
+            Err(e) => Err(e),
         }
     }
 
@@ -138,11 +183,11 @@ impl<T> Channel<T> {
     /// Otherwise, this returns `false`.
     ///
     /// ## Notifies
-    /// All receivers, if the queue is closed for the first time.
+    /// * if `true` -> all send_listeners & recv_listeners
     pub fn close(&self) -> bool {
         if self.queue.close() {
-            self.notify_recv_listeners(usize::MAX);
-            self.notify_send_listeners(usize::MAX);
+            self.recv_event.notify(usize::MAX);
+            self.send_event.notify(usize::MAX);
             true
         } else {
             false
@@ -152,74 +197,52 @@ impl<T> Channel<T> {
     /// Can be called by an inbox to know whether it should halt.
     ///
     /// This decrements the halt-counter by one when it is called, therefore every
-    /// inbox should only receive true from this method once!
+    /// inbox should only receive true from this method once! The inbox keeps it's own
+    /// local state about whether it has received true from this method.
     pub fn inbox_should_halt(&self) -> bool {
         // todo: test this
+
+        // If the count is bigger than 0, we might have to halt.
         if self.halt_count.load(Ordering::Acquire) > 0 {
-            let prev = self.halt_count.fetch_sub(1, Ordering::AcqRel);
-            if prev > 0 {
+            // Now subtract 1 from the count
+            let prev_count = self.halt_count.fetch_sub(1, Ordering::AcqRel);
+            // If the count before updating was bigger than 0, we halt.
+            // If this decrements below 0, we treat it as if it's 0.
+            if prev_count > 0 {
                 return true;
             }
         }
+
+        // Otherwise, just continue
         false
     }
 
-    /// Takes the next message from the channel.
-    ///
-    /// ## Notifies
-    /// If this is successful the next sender and receiver will be notified.
-    pub fn take_next_msg(&self) -> Result<Option<T>, ()> {
-        match self.queue.pop() {
-            Ok(msg) => {
-                self.notify_send_listeners(1);
-                self.notify_recv_listeners(1);
-                Ok(Some(msg))
-            }
-            Err(PopError::Empty) => Ok(None),
-            Err(PopError::Closed) => Err(()),
-        }
-    }
-
-    /// Push a message to the queue.
-    ///
-    /// ## Notifies
-    /// If this is successful the first receiver will be notified.
-    pub fn push_msg(&self, msg: T) -> Result<(), PushError<T>> {
-        match self.queue.push(msg) {
-            Ok(()) => {
-                self.notify_recv_listeners(1);
-                Ok(())
-            }
-            Err(e) => Err(e),
-        }
-    }
-
-    /// Halt n inboxes associated with this channel.
-    ///
-    /// If `n >= #inboxes`, all inboxes will be halted.
+    /// Halt n inboxes associated with this channel. If `n >= #inboxes`, all inboxes
+    /// will be halted. This might leave `halt-count > inbox-count`, however that's not
+    /// a problem. If n > i32::MAX, n = i32::MAX.
     ///
     /// # Notifies
-    /// Notifies `n` inboxes.
+    /// * `n` recv-listeners
     pub fn halt_n(&self, n: u32) {
         // todo: test this
         let n = i32::try_from(n).unwrap_or(i32::MAX);
 
         self.halt_count
             .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                // If the count < 0, act as if it's 0.
                 if count < 0 {
                     Some(n)
                 } else {
+                    // Otherwise, add both together.
                     Some(count.saturating_add(n))
                 }
             })
             .unwrap();
 
-        self.notify_recv_listeners(n as usize);
+        self.recv_event.notify(n as usize);
     }
 
-    /// Whether the channel has been closed.
-    ///
-    /// A closed channel can no longer
+    /// Whether the queue asscociated to the channel has been closed.
     pub fn is_closed(&self) -> bool {
         self.queue.is_closed()
     }
@@ -239,7 +262,7 @@ impl<T> Channel<T> {
         self.inbox_count.load(Ordering::Acquire)
     }
 
-    /// Capacity of the inbox
+    /// Capacity of the inbox.
     pub fn capacity(&self) -> &Capacity {
         &self.capacity
     }
@@ -248,45 +271,64 @@ impl<T> Channel<T> {
     pub fn inboxes_exited(&self) -> bool {
         self.inbox_count.load(Ordering::Acquire) == 0
     }
-}
 
-/// Listener helper functions.
-impl<T> Channel<T> {
     /// Get a new recv-event listener
-    ///
-    /// This will be notified whenever there are new messages in the inbox,
-    /// or when the process could receive a signal.
-    pub fn recv_listener(&self) -> EventListener {
+    pub fn get_recv_listener(&self) -> EventListener {
         self.recv_event.listen()
     }
 
     /// Get a new send-event listener
-    ///
-    /// This will be notifier when there is more inbox space available.
-    pub fn send_listener(&self) -> EventListener {
+    pub fn get_send_listener(&self) -> EventListener {
         self.send_event.listen()
     }
 
     /// Get a new exit-event listener
-    ///
-    /// This will be notified whenever inbox is exiting
-    pub fn exit_listener(&self) -> EventListener {
+    pub fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
     }
+}
 
-    /// Notify the recv-listeners
-    fn notify_recv_listeners(&self, amount: usize) {
-        self.recv_event.notify(amount);
+/// A channel, without information about it's message type. This channel misses any methods
+/// related to sending or receiving.
+pub(crate) trait DynamicChannel: Send + 'static {
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+    fn close(&self) -> bool;
+    fn halt_n(&self, n: u32);
+    fn inbox_count(&self) -> usize;
+    fn msg_count(&self) -> usize;
+    fn address_count(&self) -> usize;
+    fn is_closed(&self) -> bool;
+    fn capacity(&self) -> &Capacity;
+    fn inboxes_exited(&self) -> bool;
+}
+
+impl<T: Send + 'static> DynamicChannel for Channel<T> {
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
     }
-
-    /// Notify the send-listeners
-    fn notify_send_listeners(&self, amount: usize) {
-        self.send_event.notify(amount);
+    fn close(&self) -> bool {
+        self.close()
     }
-
-    /// Notify the exit-listeners
-    fn notify_exit_listeners(&self, amount: usize) {
-        self.exit_event.notify(amount);
+    fn halt_n(&self, n: u32) {
+        self.halt_n(n)
+    }
+    fn inbox_count(&self) -> usize {
+        self.inbox_count()
+    }
+    fn msg_count(&self) -> usize {
+        self.msg_count()
+    }
+    fn address_count(&self) -> usize {
+        self.address_count()
+    }
+    fn is_closed(&self) -> bool {
+        self.is_closed()
+    }
+    fn capacity(&self) -> &Capacity {
+        self.capacity()
+    }
+    fn inboxes_exited(&self) -> bool {
+        self.inboxes_exited()
     }
 }
 
@@ -446,15 +488,15 @@ mod test {
             Self {
                 recv: (0..10)
                     .into_iter()
-                    .map(|_| channel.recv_listener())
+                    .map(|_| channel.get_recv_listener())
                     .collect(),
                 exit: (0..10)
                     .into_iter()
-                    .map(|_| channel.exit_listener())
+                    .map(|_| channel.get_exit_listener())
                     .collect(),
                 send: (0..10)
                     .into_iter()
-                    .map(|_| channel.send_listener())
+                    .map(|_| channel.get_send_listener())
                     .collect(),
             }
         }

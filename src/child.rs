@@ -3,10 +3,11 @@ use futures::{Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
-//------------------------------------------------------------------------------------------------
-//  Child
-//------------------------------------------------------------------------------------------------
-
+/// A `Child` is a handle to an `Actor` with a single `Process`. A `Child` can be awaited to return
+/// the exit-value of the `tokio::task`. A `Child` is non-cloneable, and therefore unique to the
+/// `Channel`. When the `Child` is dropped, the `Actor` will be `halt`ed and `abort`ed. This can
+/// be prevented by detaching the `Child`. More processes can be spawned later, which transforms
+/// the `Child` into a `ChildPool`.
 pub struct Child<T: Send + 'static> {
     handle: Option<JoinHandle<T>>,
     channel: Arc<dyn DynamicChannel>,
@@ -30,7 +31,7 @@ impl<T: Send + 'static> Child<T> {
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    fn _into_parts(self) -> (Arc<dyn DynamicChannel>, JoinHandle<T>, Link, bool) {
+    fn into_parts(self) -> (Arc<dyn DynamicChannel>, JoinHandle<T>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handle);
@@ -41,20 +42,21 @@ impl<T: Send + 'static> Child<T> {
         }
     }
 
-    /// Split the child into it's parts.
+    /// Get the underlying [JoinHandle].
     ///
-    /// This will not run the destructor, and therefore the child will not be notified.
-    pub fn into_parts(self) -> (JoinHandle<T>, Link, bool) {
-        let (_a, b, c, d) = self._into_parts();
-        (b, c, d)
+    /// This will not run the drop-implementation, and therefore the `Actor` will not
+    /// be halted/aborted.
+    pub fn into_tokio_joinhandle(self) -> JoinHandle<T> {
+        self.into_parts().1
     }
 
-    /// Attempt to spawn an additional process linked to this channel. This will turn the
-    /// `Child` into a `ChildGroup`.
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
     ///
-    /// Can fail if:
-    /// * The inbox-type does not match that of the channel.
-    /// * The channel has already exited.
+    /// This transforms the [Child] into a [ChildPool].
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
     pub fn try_spawn<R, Fun, Fut>(
         self,
         fun: Fun,
@@ -70,11 +72,11 @@ impl<T: Send + 'static> Child<T> {
             Err(_) => return Err(TrySpawnError::IncorrectInboxType((self, fun))),
         };
 
-        match Inbox::try_from_channel(typed_channel) {
+        match Inbox::try_create(typed_channel) {
             Some(inbox) => {
                 let new_handle = tokio::task::spawn(async move { fun(inbox).await });
 
-                let (channel, old_handle, link, is_aborted) = self._into_parts();
+                let (channel, old_handle, link, is_aborted) = self.into_parts();
 
                 Ok(ChildPool {
                     channel: channel,
@@ -87,51 +89,9 @@ impl<T: Send + 'static> Child<T> {
         }
     }
 
-    /// Close the channel.
-    pub fn close(&self) -> bool {
-        self.channel.close()
-    }
-
-    /// Halt the inbox.
-    pub fn halt(&self) {
-        self.channel.halt_n(1)
-    }
-
-    /// Get the amount of inboxes linked to the channel.
-    pub fn inbox_count(&self) -> usize {
-        self.channel.inbox_count()
-    }
-
-    /// Get the amount of messages linked to the channel.
-    pub fn message_count(&self) -> usize {
-        self.channel.message_count()
-    }
-
-    /// Get the amount of addresses linked to the channel.
-    pub fn address_count(&self) -> usize {
-        self.channel.address_count()
-    }
-
-    /// Whether the channel has been closed.
-    pub fn is_closed(&self) -> bool {
-        self.channel.is_closed()
-    }
-
-    /// Attach the process. Returns true if the process was detached.
-    /// before this. Returns an error if the process has already been aborted.
-    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
-        self.link.attach(duration)
-    }
-
-    /// Detach the process. Returns true if the process was attached.
-    /// before this. Returns an error if the process has already been aborted.
-    pub fn detach(&mut self) -> Option<Duration> {
-        self.link.detach()
-    }
-
-    /// Abort all processes linked to the channel.
+    /// Abort the `Actor`.
     ///
-    /// Returns true if this is the first time aborting
+    /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
         let was_aborted = self.is_aborted;
         self.is_aborted = true;
@@ -139,7 +99,42 @@ impl<T: Send + 'static> Child<T> {
         !was_aborted
     }
 
-    /// Get a reference to the current supervision-state
+    /// Close the `Channel`.
+    pub fn close(&self) -> bool {
+        self.channel.close()
+    }
+
+    /// Halt the `Process`.
+    pub fn halt(&self) {
+        self.channel.halt_n(1)
+    }
+
+    /// Get the amount of messages in the `Channel`.
+    pub fn msg_count(&self) -> usize {
+        self.channel.msg_count()
+    }
+
+    /// Get the current amount of [Addresses](Address).
+    pub fn address_count(&self) -> usize {
+        self.channel.address_count()
+    }
+
+    /// Whether the `Channel` is closed.
+    pub fn is_closed(&self) -> bool {
+        self.channel.is_closed()
+    }
+
+    /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
+    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
+        self.link.attach(duration)
+    }
+
+    /// Detach the `Actor`. Returns the old abort-timeout, if it was attached before this.
+    pub fn detach(&mut self) -> Option<Duration> {
+        self.link.detach()
+    }
+
+    /// Get a reference to the current [Link] of the `Actor`.
     pub fn link(&self) -> &Link {
         &self.link
     }
@@ -149,13 +144,18 @@ impl<T: Send + 'static> Child<T> {
         self.handle.as_ref().unwrap().is_finished()
     }
 
-    /// Get the capacity of the channel.
+    /// Whether the [Inbox] has exited.
+    pub fn inbox_exited(&self) -> bool {
+        self.channel.inboxes_exited()
+    }
+
+    /// Get the [Capacity] of the `Channel`.
     pub fn capacity(&self) -> &Capacity {
         self.channel.capacity()
     }
 
     /// Whether the `Actor` has been aborted.
-    pub fn aborted(&self) -> bool {
+    pub fn is_aborted(&self) -> bool {
         self.is_aborted
     }
 }
@@ -179,6 +179,8 @@ impl<T: Send + 'static> Drop for Child<T> {
     }
 }
 
+impl<T: Send + 'static> Unpin for Child<T> {}
+
 impl<T: Send + 'static> Future for Child<T> {
     type Output = Result<T, ExitError>;
 
@@ -194,10 +196,9 @@ impl<T: Send + 'static> Future for Child<T> {
     }
 }
 
-//------------------------------------------------------------------------------------------------
-//  ChildGroup
-//------------------------------------------------------------------------------------------------
-
+/// A [ChildPool] is similar to a [Child], except that the `Actor` can have more
+/// than one `Process`. A [ChildPool] can be streamed to get the exit-values of
+/// all spawned `tokio::task`s.
 pub struct ChildPool<T: Send + 'static> {
     channel: Arc<dyn DynamicChannel>,
     handles: Option<Vec<JoinHandle<T>>>,
@@ -222,7 +223,7 @@ impl<T: Send + 'static> ChildPool<T> {
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub(crate) fn _into_parts(self) -> (Arc<dyn DynamicChannel>, Vec<JoinHandle<T>>, Link, bool) {
+    pub(crate) fn into_parts(self) -> (Arc<dyn DynamicChannel>, Vec<JoinHandle<T>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handles);
@@ -233,14 +234,20 @@ impl<T: Send + 'static> ChildPool<T> {
         }
     }
 
-    /// Split the child into it's parts.
+    /// Get the underlying [JoinHandles](JoinHandle). The order does not necessarily reflect
+    /// which was spawned earlier
     ///
-    /// This will not run the destructor, and therefore the child will not be notified.
-    pub fn into_parts(self) -> (Vec<JoinHandle<T>>, Link, bool) {
-        let (_a, b, c, d) = self._into_parts();
-        (b, c, d)
+    /// This will not run the drop-implementation, and therefore the `Actor` will not
+    /// be halted/aborted.
+    pub fn into_tokio_joinhandles(self) -> Vec<JoinHandle<T>> {
+        self.into_parts().1
     }
 
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
     pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
@@ -253,7 +260,7 @@ impl<T: Send + 'static> ChildPool<T> {
             Err(_) => return Err(TrySpawnError::Exited(fun)),
         };
 
-        match Inbox::try_from_channel(typed_channel) {
+        match Inbox::try_create(typed_channel) {
             Some(inbox) => {
                 let handle = tokio::task::spawn(async move { fun(inbox).await });
                 self.handles.as_mut().unwrap().push(handle);
@@ -263,9 +270,9 @@ impl<T: Send + 'static> ChildPool<T> {
         }
     }
 
-    /// Abort all processes linked to the channel.
+    /// Abort the `Actor`.
     ///
-    /// Returns true if this is the first time aborting
+    /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
         let was_aborted = self.is_aborted;
         self.is_aborted = true;
@@ -275,53 +282,52 @@ impl<T: Send + 'static> ChildPool<T> {
         !was_aborted
     }
 
-    /// Close the channel.
+    /// Close the `Channel`.
     pub fn close(&self) -> bool {
         self.channel.close()
     }
 
-    /// Halt all inboxes linked to the channel.
+    /// Halt all `Processes`.
     pub fn halt_all(&self) {
         self.channel.halt_n(u32::MAX)
     }
 
+    /// Halt `n` `Processes`.
     pub fn halt_some(&self, n: u32) {
         self.channel.halt_n(n)
     }
 
-    /// Get the amount of inboxes linked to the channel.
-    pub fn inbox_count(&self) -> usize {
-        self.channel.inbox_count()
+    /// Get the amount of messages in the `Channel`.
+    pub fn msg_count(&self) -> usize {
+        self.channel.msg_count()
     }
 
-    /// Get the amount of messages linked to the channel.
-    pub fn message_count(&self) -> usize {
-        self.channel.message_count()
-    }
-
-    /// Get the amount of addresses linked to the channel.
+    /// Get the current amount of [Addresses](Address).
     pub fn address_count(&self) -> usize {
         self.channel.address_count()
     }
 
-    /// Whether the channel has been closed.
+    /// Get the amount of messages in the `Channel`.
+    pub fn inbox_count(&self) -> usize {
+        self.channel.inbox_count()
+    }
+
+    /// Whether the `Channel` is closed.
     pub fn is_closed(&self) -> bool {
         self.channel.is_closed()
     }
 
-    /// Attach the process. Returns true if the process was detached.
-    /// before this. Returns an error if the process has already been aborted.
+    /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
     pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
         self.link.attach(duration)
     }
 
-    /// Detach the process. Returns true if the process was attached.
-    /// before this. Returns an error if the process has already been aborted.
+    /// Detach the `Actor`. Returns the old abort-timeout, if it was attached before this.
     pub fn detach(&mut self) -> Option<Duration> {
         self.link.detach()
     }
 
-    /// Get a reference to the current supervision-state
+    /// Get a reference to the current [Link] of the `Actor`.
     pub fn link(&self) -> &Link {
         &self.link
     }
@@ -346,18 +352,18 @@ impl<T: Send + 'static> ChildPool<T> {
             .len()
     }
 
-    /// The amount of `Child`ren in this `ChildPool`. This included both alive and
-    /// dead processes.
+    /// The amount of `Child`ren in this `ChildPool`, this includes both alive and
+    /// dead `Processes`.
     pub fn child_count(&self) -> usize {
         self.handles.as_ref().unwrap().len()
     }
 
-    /// Whether the `Actor` has been aborted.
-    pub fn aborted(&self) -> bool {
+    /// Whether the `Actor` is aborted.
+    pub fn is_aborted(&self) -> bool {
         self.is_aborted
     }
 
-    /// Get the capacity of the channel.
+    /// Get the [Capacity] of the `Channel`.
     pub fn capacity(&self) -> &Capacity {
         self.channel.capacity()
     }
@@ -407,56 +413,12 @@ impl<T: Send + 'static> Drop for ChildPool<T> {
 }
 
 //------------------------------------------------------------------------------------------------
-//  DynamicChannel
-//------------------------------------------------------------------------------------------------
-
-pub(crate) trait DynamicChannel: Send + 'static {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-    fn close(&self) -> bool;
-    fn halt_n(&self, n: u32);
-    fn inbox_count(&self) -> usize;
-    fn message_count(&self) -> usize;
-    fn address_count(&self) -> usize;
-    fn is_closed(&self) -> bool;
-    fn capacity(&self) -> &Capacity;
-    fn has_exited(&self) -> bool;
-}
-
-impl<T: Send + 'static> DynamicChannel for Channel<T> {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-    fn close(&self) -> bool {
-        self.close()
-    }
-    fn halt_n(&self, n: u32) {
-        self.halt_n(n)
-    }
-    fn inbox_count(&self) -> usize {
-        self.inbox_count()
-    }
-    fn message_count(&self) -> usize {
-        self.msg_count()
-    }
-    fn address_count(&self) -> usize {
-        self.address_count()
-    }
-    fn is_closed(&self) -> bool {
-        self.is_closed()
-    }
-    /// Get the capacity of the channel.
-    fn capacity(&self) -> &Capacity {
-        self.capacity()
-    }
-    fn has_exited(&self) -> bool {
-        self.inboxes_exited()
-    }
-}
-
-//------------------------------------------------------------------------------------------------
 //  Errors
 //------------------------------------------------------------------------------------------------
 
+/// An error returned from an exiting tokio-task.
+/// 
+/// Can be either because it has panicked, or because it was aborted.
 #[derive(Debug, thiserror::Error)]
 pub enum ExitError {
     #[error("Child has panicked")]
@@ -466,6 +428,7 @@ pub enum ExitError {
 }
 
 impl ExitError {
+    /// Whether the error is a panic.
     pub fn is_panic(&self) -> bool {
         match self {
             ExitError::Panic(_) => true,
@@ -473,6 +436,7 @@ impl ExitError {
         }
     }
 
+    /// Whether the error is an abort.
     pub fn is_abort(&self) -> bool {
         match self {
             ExitError::Panic(_) => false,
@@ -490,6 +454,7 @@ impl From<tokio::task::JoinError> for ExitError {
     }
 }
 
+/// An error returned when trying to spawn more processes onto a `Channel`.
 #[derive(Clone, thiserror::Error)]
 pub enum TrySpawnError<T> {
     #[error("Channel has already exited")]

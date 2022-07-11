@@ -8,6 +8,10 @@ use std::{
     task::{Context, Poll},
 };
 
+/// An `Inbox` is a receiver-part of the `Channel`, and is primarily used to take messages out
+/// of the `Channel`. `Inbox`es can only be created by spawning new `Process`es and should stay
+/// coupled to the `tokio::task` they were spawned with. Therefore, an `Inbox` should only be
+/// dropped when the `tokio::task` is exiting.
 pub struct Inbox<T> {
     // The underlying channel
     channel: Arc<Channel<T>>,
@@ -18,6 +22,9 @@ pub struct Inbox<T> {
 }
 
 impl<T> Inbox<T> {
+    /// Create the inbox from a channel.
+    ///
+    /// This does not increment the inbox_count.
     pub(crate) fn from_channel(channel: Arc<Channel<T>>) -> Self {
         Inbox {
             channel,
@@ -27,7 +34,9 @@ impl<T> Inbox<T> {
     }
 
     /// Create a new inbox from a channel. Returns `None` if the `Channel` has exited.
-    pub(crate) fn try_from_channel(channel: Arc<Channel<T>>) -> Option<Self> {
+    ///  
+    /// This increments the inbox-count automatically
+    pub(crate) fn try_create(channel: Arc<Channel<T>>) -> Option<Self> {
         match channel.try_add_inbox() {
             Ok(()) => Some(Self {
                 channel,
@@ -38,14 +47,15 @@ impl<T> Inbox<T> {
         }
     }
 
-    /// This will attempt to receive a message from the inbox.
+    /// This will attempt to receive a message from the [Inbox]. If there is no message, this
+    /// will return `None`.
     pub fn try_recv(&mut self) -> Result<Option<T>, RecvError> {
-        // If we have not yet signaled for supervision yet, and there is a signal ready.
+        // If we have not yet signaled halt yet, check if we should
         if !self.signaled_halt && self.channel.inbox_should_halt() {
             self.signaled_halt = true;
             Err(RecvError::Halted)
 
-        // Otherwise, we can just try to receive a message.
+        // Otherwise, just take a msg from the channel
         } else {
             self.channel
                 .take_next_msg()
@@ -53,51 +63,29 @@ impl<T> Inbox<T> {
         }
     }
 
-    /// This will wait for a message in the inbox.
+    /// Wait until there is a message in the [Inbox].
     pub fn recv(&mut self) -> Rcv<'_, T> {
         Rcv { inbox: self }
     }
 
-    /// See [Address::try_send]
+    /// Same as [Address::try_send]
     pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
         try_send(&self.channel, msg)
     }
 
-    /// See [Address::send_now]
+    /// Same as [Address::send_now]
     pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
         send_now(&self.channel, msg)
     }
 
-    /// See [Address::send]
+    /// Same as [Address::send]
     pub fn send(&self, msg: T) -> Snd<'_, T> {
         send(&self.channel, msg)
     }
 
-    /// See [Address::send_blocking]
+    /// Same as [Address::send_blocking]
     pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
         send_blocking(&self.channel, msg)
-    }
-
-    /// Receive a message while blocking the scheduler.
-    pub fn recv_blocking(&mut self) -> Result<T, RecvError> {
-        loop {
-            match self.try_recv() {
-                Ok(None) => (),
-                Ok(Some(msg)) => {
-                    self.listener = None;
-                    return Ok(msg);
-                }
-                Err(signal) => {
-                    self.listener = None;
-                    match signal {
-                        RecvError::Halted => return Err(RecvError::Halted),
-                        RecvError::ClosedAndEmpty => return Err(RecvError::ClosedAndEmpty),
-                    }
-                }
-            }
-
-            self.channel.recv_listener().wait();
-        }
     }
 
     /// Close the channel.
@@ -105,43 +93,43 @@ impl<T> Inbox<T> {
         self.channel.close()
     }
 
-    /// Halt all inboxes linked to the channel.
-    pub fn halt(&self) {
+    /// Halt all `Processes`.
+    pub fn halt_all(&self) {
         self.channel.halt_n(u32::MAX)
     }
 
-    /// Halt n inboxes linked to the channel.
+    /// Halt n `Processes`.
     pub fn halt_some(&self, n: u32) {
         self.channel.halt_n(n)
     }
 
-    /// Get the amount of inboxes linked to the channel.
+    /// Get the current amount of [Inboxes](Inbox).
     pub fn inbox_count(&self) -> usize {
         self.channel.inbox_count()
     }
 
-    /// Get the amount of messages linked to the channel.
-    pub fn message_count(&self) -> usize {
+    /// Get the amount of messages in the `Channel`.
+    pub fn msg_count(&self) -> usize {
         self.channel.msg_count()
     }
 
-    /// Get the amount of addresses linked to the channel.
+    /// Get the current amount of [Addresses](Address).
     pub fn address_count(&self) -> usize {
         self.channel.address_count()
     }
 
-    /// Whether the channel has been closed.
+    /// Whether the channel is `closed`.
     pub fn is_closed(&self) -> bool {
         self.channel.is_closed()
     }
 
-    /// Get the capacity of the channel.
+    /// Get the [Capacity] of the `Channel`.
     pub fn capacity(&self) -> &Capacity {
         self.channel.capacity()
     }
 
-    /// Clone, for use within the crate.
-    pub(crate) fn clone_inbox(&self) -> Self {
+    /// Private clone
+    pub(crate) fn _clone(&self) -> Self {
         self.channel.add_inbox();
         Self {
             channel: self.channel.clone(),
@@ -151,6 +139,9 @@ impl<T> Inbox<T> {
     }
 }
 
+// It should be fine to share the same event-listener between inbox-stream and 
+// rcv-future, as long as both clean up properly after returning Poll::Ready.
+// (Always remove the event-listener from the Option)
 impl<T> Stream for Inbox<T> {
     type Item = Result<T, Halted>;
 
@@ -159,6 +150,7 @@ impl<T> Stream for Inbox<T> {
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Option<Self::Item>> {
         loop {
+            // Attempt to receive a message, and return if necessary
             match self.try_recv() {
                 Ok(None) => (),
                 Ok(Some(msg)) => {
@@ -174,10 +166,12 @@ impl<T> Stream for Inbox<T> {
                 }
             }
 
+            // Otherwise, acquire a listener, if we don't have one yet
             if self.listener.is_none() {
-                self.listener = Some(self.channel.recv_listener())
+                self.listener = Some(self.channel.get_recv_listener())
             }
 
+            // And poll the future
             match self.listener.as_mut().unwrap().poll_unpin(cx) {
                 Poll::Ready(()) => {}
                 Poll::Pending => return Poll::Pending,
@@ -205,6 +199,9 @@ impl<T> Debug for Inbox<T> {
 //  Rcv
 //------------------------------------------------------------------------------------------------
 
+/// A future returned by receiving messages from an `Inbox`.
+///
+/// This can be `.await`-ed to get the message from the `Inbox`.
 pub struct Rcv<'a, T> {
     inbox: &'a mut Inbox<T>,
 }
@@ -216,23 +213,30 @@ impl<'a, T> Future for Rcv<'a, T> {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
+            // Attempt to receive a message, and return if necessary
             match self.inbox.try_recv() {
                 Ok(None) => (),
                 Ok(Some(msg)) => {
+                    self.inbox.listener = None;
                     return Poll::Ready(Ok(msg));
                 }
-                Err(signal) => match signal {
-                    RecvError::Halted => return Poll::Ready(Err(RecvError::Halted)),
-                    RecvError::ClosedAndEmpty => {
-                        return Poll::Ready(Err(RecvError::ClosedAndEmpty))
+                Err(signal) => {
+                    self.inbox.listener = None;
+                    match signal {
+                        RecvError::Halted => return Poll::Ready(Err(RecvError::Halted)),
+                        RecvError::ClosedAndEmpty => {
+                            return Poll::Ready(Err(RecvError::ClosedAndEmpty))
+                        }
                     }
-                },
+                }
             }
 
+            // Otherwise, acquire a listener, if we don't have one yet
             if self.inbox.listener.is_none() {
-                self.inbox.listener = Some(self.inbox.channel.recv_listener())
+                self.inbox.listener = Some(self.inbox.channel.get_recv_listener())
             }
 
+            // And poll the future
             match self.inbox.listener.as_mut().unwrap().poll_unpin(cx) {
                 Poll::Ready(()) => self.inbox.listener = None,
                 Poll::Pending => return Poll::Pending,

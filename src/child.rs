@@ -8,18 +8,15 @@ use tokio::task::JoinHandle;
 /// `Channel`. When the `Child` is dropped, the `Actor` will be `halt`ed and `abort`ed. This can
 /// be prevented by detaching the `Child`. More processes can be spawned later, which transforms
 /// the `Child` into a `ChildPool`.
-pub struct Child<T: Send + 'static> {
-    handle: Option<JoinHandle<T>>,
-    channel: Arc<dyn DynamicChannel>,
+pub struct Child<E: Send + 'static, C: DynChannel + ?Sized = dyn DynChannel> {
+    handle: Option<JoinHandle<E>>,
+    channel: Arc<C>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<T: Send + 'static> Child<T> {
-    pub(crate) fn new<R>(channel: Arc<Channel<R>>, join_handle: JoinHandle<T>, link: Link) -> Self
-    where
-        R: Send + 'static,
-    {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Child<E, C> {
+    pub(crate) fn new(channel: Arc<C>, join_handle: JoinHandle<E>, link: Link) -> Self {
         Self {
             handle: Some(join_handle),
             link,
@@ -31,7 +28,7 @@ impl<T: Send + 'static> Child<T> {
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    fn into_parts(self) -> (Arc<dyn DynamicChannel>, JoinHandle<T>, Link, bool) {
+    fn into_parts(self) -> (Arc<C>, JoinHandle<E>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handle);
@@ -46,47 +43,8 @@ impl<T: Send + 'static> Child<T> {
     ///
     /// This will not run the drop-implementation, and therefore the `Actor` will not
     /// be halted/aborted.
-    pub fn into_tokio_joinhandle(self) -> JoinHandle<T> {
+    pub fn into_tokio_joinhandle(self) -> JoinHandle<E> {
         self.into_parts().1
-    }
-
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
-    ///
-    /// This transforms the [Child] into a [ChildPool].
-    ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
-    pub fn try_spawn<R, Fun, Fut>(
-        self,
-        fun: Fun,
-    ) -> Result<ChildPool<T>, TrySpawnError<(Self, Fun)>>
-    where
-        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
-        Fut: Future<Output = T> + Send + 'static,
-        R: Send + 'static,
-        T: Send + 'static,
-    {
-        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
-            Ok(channel) => channel,
-            Err(_) => return Err(TrySpawnError::IncorrectInboxType((self, fun))),
-        };
-
-        match Inbox::try_create(typed_channel) {
-            Some(inbox) => {
-                let new_handle = tokio::task::spawn(async move { fun(inbox).await });
-
-                let (channel, old_handle, link, is_aborted) = self.into_parts();
-
-                Ok(ChildPool {
-                    channel: channel,
-                    handles: Some(vec![old_handle, new_handle]),
-                    link,
-                    is_aborted: is_aborted,
-                })
-            }
-            None => Err(TrySpawnError::Exited((self, fun))),
-        }
     }
 
     /// Abort the `Actor`.
@@ -160,7 +118,92 @@ impl<T: Send + 'static> Child<T> {
     }
 }
 
-impl<T: Send + 'static> Drop for Child<T> {
+impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This transforms the [Child] into a [ChildPool].
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
+    pub fn spawn<Fun, Fut>(self, fun: Fun) -> Result<ChildPool<E>, TrySpawnError<(Self, Fun)>>
+    where
+        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+        M: Send + 'static,
+        E: Send + 'static,
+    {
+        match Inbox::try_create(self.channel.clone()) {
+            Some(inbox) => {
+                let new_handle = tokio::task::spawn(async move { fun(inbox).await });
+
+                let (channel, old_handle, link, is_aborted) = self.into_parts();
+
+                Ok(ChildPool {
+                    channel: channel,
+                    handles: Some(vec![old_handle, new_handle]),
+                    link,
+                    is_aborted: is_aborted,
+                })
+            }
+            None => Err(TrySpawnError::Exited((self, fun))),
+        }
+    }
+
+    /// Convert the `Child<T, Channel<M>>` into a `Child<T>`
+    pub fn into_dyn(self) -> Child<E> {
+        let parts = self.into_parts();
+        Child {
+            handle: Some(parts.1),
+            channel: parts.0,
+            link: parts.2,
+            is_aborted: parts.3,
+        }
+    }
+}
+
+impl<E: Send + 'static> Child<E> {
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This transforms the [Child] into a [ChildPool].
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
+    pub fn try_spawn<R, Fun, Fut>(
+        self,
+        fun: Fun,
+    ) -> Result<ChildPool<E>, TrySpawnError<(Self, Fun)>>
+    where
+        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
+            Ok(channel) => channel,
+            Err(_) => return Err(TrySpawnError::IncorrectInboxType((self, fun))),
+        };
+
+        match Inbox::try_create(typed_channel) {
+            Some(inbox) => {
+                let new_handle = tokio::task::spawn(async move { fun(inbox).await });
+
+                let (channel, old_handle, link, is_aborted) = self.into_parts();
+
+                Ok(ChildPool {
+                    channel: channel,
+                    handles: Some(vec![old_handle, new_handle]),
+                    link,
+                    is_aborted: is_aborted,
+                })
+            }
+            None => Err(TrySpawnError::Exited((self, fun))),
+        }
+    }
+}
+
+impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for Child<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.exited() {
@@ -179,10 +222,10 @@ impl<T: Send + 'static> Drop for Child<T> {
     }
 }
 
-impl<T: Send + 'static> Unpin for Child<T> {}
+impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for Child<E, C> {}
 
-impl<T: Send + 'static> Future for Child<T> {
-    type Output = Result<T, ExitError>;
+impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
+    type Output = Result<E, ExitError>;
 
     fn poll(
         mut self: std::pin::Pin<&mut Self>,
@@ -199,19 +242,15 @@ impl<T: Send + 'static> Future for Child<T> {
 /// A [ChildPool] is similar to a [Child], except that the `Actor` can have more
 /// than one `Process`. A [ChildPool] can be streamed to get the exit-values of
 /// all spawned `tokio::task`s.
-pub struct ChildPool<T: Send + 'static> {
-    channel: Arc<dyn DynamicChannel>,
-    handles: Option<Vec<JoinHandle<T>>>,
+pub struct ChildPool<E: Send + 'static, C: DynChannel + ?Sized = dyn DynChannel> {
+    channel: Arc<C>,
+    handles: Option<Vec<JoinHandle<E>>>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<T: Send + 'static> ChildPool<T> {
-    pub(crate) fn new<R: 'static + Send>(
-        channel: Arc<Channel<R>>,
-        handles: Vec<JoinHandle<T>>,
-        link: Link,
-    ) -> Self {
+impl<E: Send + 'static, C: DynChannel + ?Sized> ChildPool<E, C> {
+    pub(crate) fn new(channel: Arc<C>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
         Self {
             channel,
             handles: Some(handles),
@@ -223,7 +262,7 @@ impl<T: Send + 'static> ChildPool<T> {
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub(crate) fn into_parts(self) -> (Arc<dyn DynamicChannel>, Vec<JoinHandle<T>>, Link, bool) {
+    pub(crate) fn into_parts(self) -> (Arc<C>, Vec<JoinHandle<E>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handles);
@@ -239,35 +278,8 @@ impl<T: Send + 'static> ChildPool<T> {
     ///
     /// This will not run the drop-implementation, and therefore the `Actor` will not
     /// be halted/aborted.
-    pub fn into_tokio_joinhandles(self) -> Vec<JoinHandle<T>> {
+    pub fn into_tokio_joinhandles(self) -> Vec<JoinHandle<E>> {
         self.into_parts().1
-    }
-
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
-    ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
-    pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
-    where
-        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
-        Fut: Future<Output = T> + Send + 'static,
-        R: Send + 'static,
-        T: Send + 'static,
-    {
-        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
-            Ok(channel) => channel,
-            Err(_) => return Err(TrySpawnError::Exited(fun)),
-        };
-
-        match Inbox::try_create(typed_channel) {
-            Some(inbox) => {
-                let handle = tokio::task::spawn(async move { fun(inbox).await });
-                self.handles.as_mut().unwrap().push(handle);
-                Ok(())
-            }
-            None => Err(TrySpawnError::Exited(fun)),
-        }
     }
 
     /// Abort the `Actor`.
@@ -369,8 +381,70 @@ impl<T: Send + 'static> ChildPool<T> {
     }
 }
 
-impl<T: Send + 'static> Stream for ChildPool<T> {
-    type Item = Result<T, ExitError>;
+impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
+    pub fn into_dyn(self) -> ChildPool<E> {
+        let parts = self.into_parts();
+        ChildPool {
+            handles: Some(parts.1),
+            channel: parts.0,
+            link: parts.2,
+            is_aborted: parts.3,
+        }
+    }
+
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
+    pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
+    where
+        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+        E: Send + 'static,
+    {
+        match Inbox::try_create(self.channel.clone()) {
+            Some(inbox) => {
+                let handle = tokio::task::spawn(async move { fun(inbox).await });
+                self.handles.as_mut().unwrap().push(handle);
+                Ok(())
+            }
+            None => Err(TrySpawnError::Exited(fun)),
+        }
+    }
+}
+
+impl<E: Send + 'static> ChildPool<E> {
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
+    pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
+    where
+        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
+            Ok(channel) => channel,
+            Err(_) => return Err(TrySpawnError::Exited(fun)),
+        };
+
+        match Inbox::try_create(typed_channel) {
+            Some(inbox) => {
+                let handle = tokio::task::spawn(async move { fun(inbox).await });
+                self.handles.as_mut().unwrap().push(handle);
+                Ok(())
+            }
+            None => Err(TrySpawnError::Exited(fun)),
+        }
+    }
+}
+
+impl<E: Send + 'static, C: DynChannel + ?Sized> Stream for ChildPool<E, C> {
+    type Item = Result<E, ExitError>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -391,7 +465,7 @@ impl<T: Send + 'static> Stream for ChildPool<T> {
     }
 }
 
-impl<T: Send + 'static> Drop for ChildPool<T> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.exited() {
@@ -417,7 +491,7 @@ impl<T: Send + 'static> Drop for ChildPool<T> {
 //------------------------------------------------------------------------------------------------
 
 /// An error returned from an exiting tokio-task.
-/// 
+///
 /// Can be either because it has panicked, or because it was aborted.
 #[derive(Debug, thiserror::Error)]
 pub enum ExitError {

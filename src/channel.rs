@@ -2,16 +2,20 @@ use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use el::{Event, EventListener};
 use event_listener as el;
-use std::{sync::{
-    atomic::{AtomicI32, AtomicUsize, Ordering},
-    Arc,
-}, any::Any};
+use std::{
+    any::Any,
+    fmt::Debug,
+    sync::{
+        atomic::{AtomicI32, AtomicUsize, Ordering},
+        Arc,
+    }
+};
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 /// This is wrapped in an Arc to allow sharing between them.
-pub(crate) struct Channel<T> {
+pub struct Channel<M> {
     /// The underlying queue
-    queue: ConcurrentQueue<T>,
+    queue: ConcurrentQueue<M>,
     /// The capacity of the channel
     capacity: Capacity,
 
@@ -35,7 +39,7 @@ pub(crate) struct Channel<T> {
     halt_count: AtomicI32,
 }
 
-impl<T> Channel<T> {
+impl<M> Channel<M> {
     /// Create a new channel, given an address count, inbox_count and capacity.
     ///
     /// After this, it must be ensured that the correct amount of inboxes and addresses actually exist.
@@ -151,7 +155,7 @@ impl<T> Channel<T> {
     ///
     /// ## Notifies
     /// on success -> 1 send_listener & 1 recv_listener
-    pub fn take_next_msg(&self) -> Result<Option<T>, ()> {
+    pub fn take_next_msg(&self) -> Result<Option<M>, ()> {
         match self.queue.pop() {
             Ok(msg) => {
                 self.send_event.notify(1);
@@ -169,7 +173,7 @@ impl<T> Channel<T> {
     ///
     /// ## Notifies
     /// on success -> 1 recv_listener
-    pub fn push_msg(&self, msg: T) -> Result<(), PushError<T>> {
+    pub fn push_msg(&self, msg: M) -> Result<(), PushError<M>> {
         match self.queue.push(msg) {
             Ok(()) => {
                 self.recv_event.notify(1);
@@ -288,9 +292,11 @@ impl<T> Channel<T> {
     }
 }
 
+
+
 /// A channel, without information about it's message type. This channel misses any methods
 /// related to sending or receiving.
-pub(crate) trait DynamicChannel: Send + 'static {
+pub trait DynChannel: Send + 'static {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
     fn close(&self) -> bool;
     fn halt_n(&self, n: u32);
@@ -302,7 +308,7 @@ pub(crate) trait DynamicChannel: Send + 'static {
     fn inboxes_exited(&self) -> bool;
 }
 
-impl<T: Send + 'static> DynamicChannel for Channel<T> {
+impl<M: Send + 'static> DynChannel for Channel<M> {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }

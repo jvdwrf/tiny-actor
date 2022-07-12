@@ -12,16 +12,16 @@ use tokio::time::Sleep;
 /// An `Address` is the cloneable sender-part of a `Channel`, and is primarily used to send messages
 /// to the `Actor`. When all `Address`es are dropped, the `Channel` is closed automatically. `Address`es
 /// can be awaited, which will return when the `Actor` has exited.
-pub struct Address<T> {
-    channel: Arc<Channel<T>>,
+pub struct Address<M> {
+    channel: Arc<Channel<M>>,
     exit_listener: Option<EventListener>,
 }
 
-impl<T> Address<T> {
+impl<M> Address<M> {
     /// Create a new address from a Channel.
     ///
     /// This does not increment the address-count.
-    pub(crate) fn from_channel(channel: Arc<Channel<T>>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<Channel<M>>) -> Self {
         Self {
             channel,
             exit_listener: None,
@@ -35,7 +35,7 @@ impl<T> Address<T> {
     /// * `bounded`: If the `Channel` is full, this method will fail.
     ///
     /// This method is exactly the same as [Address::send_now] for bounded `Channels`.
-    pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
+    pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
         try_send(&self.channel, msg)
     }
 
@@ -46,7 +46,7 @@ impl<T> Address<T> {
     /// * `bounded`: If the `Channel` is full, this method will fail.
     ///
     /// This method is exactly the same as [Address::try_send] for bounded `Channels`.
-    pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
+    pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
         send_now(&self.channel, msg)
     }
 
@@ -56,12 +56,12 @@ impl<T> Address<T> {
     /// * `unbounded` -> If [BackPressure] gives a timeout, this method will wait for it to be
     /// finished.
     /// * `bounded` -> If the `Channel` is full, this method waits for space to be available.
-    pub fn send(&self, msg: T) -> Snd<'_, T> {
+    pub fn send(&self, msg: M) -> Snd<'_, M> {
         send(&self.channel, msg)
     }
 
     /// Same as [Address::send] except it blocks the current OS-thread.
-    pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
+    pub fn send_blocking(&self, msg: M) -> Result<(), SendError<M>> {
         send_blocking(&self.channel, msg)
     }
 
@@ -111,9 +111,9 @@ impl<T> Address<T> {
     }
 }
 
-impl<T> Unpin for Address<T> {}
+impl<M> Unpin for Address<M> {}
 
-impl<T> Future for Address<T> {
+impl<M> Future for Address<M> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -135,7 +135,7 @@ impl<T> Future for Address<T> {
     }
 }
 
-impl<A> Clone for Address<A> {
+impl<M> Clone for Address<M> {
     fn clone(&self) -> Self {
         self.channel.add_address();
         Self {
@@ -145,7 +145,7 @@ impl<A> Clone for Address<A> {
     }
 }
 
-impl<A> Drop for Address<A> {
+impl<M> Drop for Address<M> {
     fn drop(&mut self) {
         self.channel.remove_address()
     }
@@ -156,9 +156,9 @@ impl<A> Drop for Address<A> {
 //------------------------------------------------------------------------------------------------
 
 /// The send-future, this can be `.await`-ed to send the message.
-pub struct Snd<'a, T> {
-    channel: &'a Channel<T>,
-    msg: Option<T>,
+pub struct Snd<'a, M> {
+    channel: &'a Channel<M>,
+    msg: Option<M>,
     fut: Option<SndFut>,
 }
 
@@ -168,8 +168,8 @@ enum SndFut {
     Sleep(Pin<Box<Sleep>>), // todo: can this box be removed?
 }
 
-impl<'a, T> Snd<'a, T> {
-    pub(crate) fn new(channel: &'a Channel<T>, msg: T) -> Self {
+impl<'a, M> Snd<'a, M> {
+    pub(crate) fn new(channel: &'a Channel<M>, msg: M) -> Self {
         Snd {
             channel,
             msg: Some(msg),
@@ -178,10 +178,10 @@ impl<'a, T> Snd<'a, T> {
     }
 }
 
-impl<'a, T> Unpin for Snd<'a, T> {}
+impl<'a, M> Unpin for Snd<'a, M> {}
 
-impl<'a, T> Future for Snd<'a, T> {
-    type Output = Result<(), SendError<T>>;
+impl<'a, M> Future for Snd<'a, M> {
+    type Output = Result<(), SendError<M>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         fn bounded_send<T>(
@@ -264,21 +264,21 @@ impl<'a, T> Future for Snd<'a, T> {
 /// Construct a new `Snd`-future
 ///
 /// See [Address::send]
-pub(crate) fn send<T>(channel: &Channel<T>, msg: T) -> Snd<'_, T> {
+pub(crate) fn send<M>(channel: &Channel<M>, msg: M) -> Snd<'_, M> {
     Snd::new(&channel, msg)
 }
 
 /// Send a message at this moment. This ignores any [BackPressure].
 ///
 /// See [Address::send_now]
-pub(crate) fn send_now<T>(channel: &Channel<T>, msg: T) -> Result<(), TrySendError<T>> {
+pub(crate) fn send_now<M>(channel: &Channel<M>, msg: M) -> Result<(), TrySendError<M>> {
     Ok(channel.push_msg(msg)?)
 }
 
 /// Send a message at this moment. This fails if [BackPressure] gives a timeout.
 ///
 /// See [Address::send_now]
-pub(crate) fn try_send<T>(channel: &Channel<T>, msg: T) -> Result<(), TrySendError<T>> {
+pub(crate) fn try_send<M>(channel: &Channel<M>, msg: M) -> Result<(), TrySendError<M>> {
     match channel.capacity() {
         Capacity::Bounded(_) => Ok(channel.push_msg(msg)?),
         Capacity::Unbounded(backoff) => match backoff.get_timeout(channel.msg_count()) {
@@ -289,7 +289,7 @@ pub(crate) fn try_send<T>(channel: &Channel<T>, msg: T) -> Result<(), TrySendErr
 }
 
 /// Same as `send` except blocking.
-pub(crate) fn send_blocking<T>(channel: &Channel<T>, mut msg: T) -> Result<(), SendError<T>> {
+pub(crate) fn send_blocking<M>(channel: &Channel<M>, mut msg: M) -> Result<(), SendError<M>> {
     match channel.capacity() {
         Capacity::Bounded(_) => loop {
             msg = match channel.push_msg(msg) {
@@ -321,13 +321,13 @@ pub(crate) fn send_blocking<T>(channel: &Channel<T>, mut msg: T) -> Result<(), S
 ///
 /// This can be either because the `Channel` is closed, or because it is full.
 #[derive(Debug, Clone)]
-pub enum TrySendError<T> {
-    Closed(T),
-    Full(T),
+pub enum TrySendError<M> {
+    Closed(M),
+    Full(M),
 }
 
-impl<T> From<PushError<T>> for TrySendError<T> {
-    fn from(e: PushError<T>) -> Self {
+impl<M> From<PushError<M>> for TrySendError<M> {
+    fn from(e: PushError<M>) -> Self {
         match e {
             PushError::Full(msg) => Self::Full(msg),
             PushError::Closed(msg) => Self::Closed(msg),
@@ -337,4 +337,4 @@ impl<T> From<PushError<T>> for TrySendError<T> {
 
 /// An error returned when sending a message into a `Channel` because the `Channel` is closed.
 #[derive(Debug, Clone)]
-pub struct SendError<T>(pub T);
+pub struct SendError<M>(pub M);

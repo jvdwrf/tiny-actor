@@ -1,7 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use futures::{future::pending, StreamExt};
-use tiny_actor::{spawn, spawn_pooled, BackPressure, Capacity, Config, Inbox, Link, RecvError};
+use tiny_actor::{spawn, spawn_many, BackPressure, Capacity, Config, Inbox, Link, RecvError};
 
 #[tokio::test]
 async fn spawn_and_abort() {
@@ -103,6 +103,7 @@ async fn child_to_pool() {
     });
     assert_eq!(address.inbox_count(), 1);
     let pool = child
+        .into_dyn()
         .try_spawn(|mut inbox: Inbox<()>| async move {
             inbox.recv().await.unwrap_err();
         })
@@ -112,13 +113,14 @@ async fn child_to_pool() {
 
 #[tokio::test]
 async fn inbox_counts() {
-    let (mut pool, _address) = spawn_pooled(
+    let (pool, _address) = spawn_many(
         0..4,
         Config::default(),
         |_, mut inbox: Inbox<()>| async move {
             inbox.recv().await.unwrap_err();
         },
     );
+    let mut pool = pool.into_dyn();
     assert_eq!(pool.inbox_count(), 4);
 
     pool.halt_some(1);
@@ -142,7 +144,7 @@ async fn inbox_counts() {
 
 #[tokio::test]
 async fn pooled_messaging_split() {
-    let (pool, address) = spawn_pooled(0..3, Config::bounded(5), |_, mut inbox| async move {
+    let (pool, address) = spawn_many(0..3, Config::bounded(5), |_, mut inbox| async move {
         let mut numbers = Vec::new();
         loop {
             match inbox.recv().await {

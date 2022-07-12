@@ -12,20 +12,20 @@ use std::{
 /// of the `Channel`. `Inbox`es can only be created by spawning new `Process`es and should stay
 /// coupled to the `tokio::task` they were spawned with. Therefore, an `Inbox` should only be
 /// dropped when the `tokio::task` is exiting.
-pub struct Inbox<T> {
+pub struct Inbox<M> {
     // The underlying channel
-    channel: Arc<Channel<T>>,
+    channel: Arc<Channel<M>>,
     // The listener for receiving events
     listener: Option<el::EventListener>,
     // Whether this inbox has signaled halt yet
     signaled_halt: bool,
 }
 
-impl<T> Inbox<T> {
+impl<M> Inbox<M> {
     /// Create the inbox from a channel.
     ///
     /// This does not increment the inbox_count.
-    pub(crate) fn from_channel(channel: Arc<Channel<T>>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<Channel<M>>) -> Self {
         Inbox {
             channel,
             listener: None,
@@ -36,7 +36,7 @@ impl<T> Inbox<T> {
     /// Create a new inbox from a channel. Returns `None` if the `Channel` has exited.
     ///  
     /// This increments the inbox-count automatically
-    pub(crate) fn try_create(channel: Arc<Channel<T>>) -> Option<Self> {
+    pub(crate) fn try_create(channel: Arc<Channel<M>>) -> Option<Self> {
         match channel.try_add_inbox() {
             Ok(()) => Some(Self {
                 channel,
@@ -49,7 +49,7 @@ impl<T> Inbox<T> {
 
     /// This will attempt to receive a message from the [Inbox]. If there is no message, this
     /// will return `None`.
-    pub fn try_recv(&mut self) -> Result<Option<T>, RecvError> {
+    pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
         // If we have not yet signaled halt yet, check if we should
         if !self.signaled_halt && self.channel.inbox_should_halt() {
             self.signaled_halt = true;
@@ -64,27 +64,27 @@ impl<T> Inbox<T> {
     }
 
     /// Wait until there is a message in the [Inbox].
-    pub fn recv(&mut self) -> Rcv<'_, T> {
+    pub fn recv(&mut self) -> Rcv<'_, M> {
         Rcv { inbox: self }
     }
 
     /// Same as [Address::try_send]
-    pub fn try_send(&self, msg: T) -> Result<(), TrySendError<T>> {
+    pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
         try_send(&self.channel, msg)
     }
 
     /// Same as [Address::send_now]
-    pub fn send_now(&self, msg: T) -> Result<(), TrySendError<T>> {
+    pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
         send_now(&self.channel, msg)
     }
 
     /// Same as [Address::send]
-    pub fn send(&self, msg: T) -> Snd<'_, T> {
+    pub fn send(&self, msg: M) -> Snd<'_, M> {
         send(&self.channel, msg)
     }
 
     /// Same as [Address::send_blocking]
-    pub fn send_blocking(&self, msg: T) -> Result<(), SendError<T>> {
+    pub fn send_blocking(&self, msg: M) -> Result<(), SendError<M>> {
         send_blocking(&self.channel, msg)
     }
 
@@ -142,8 +142,8 @@ impl<T> Inbox<T> {
 // It should be fine to share the same event-listener between inbox-stream and 
 // rcv-future, as long as both clean up properly after returning Poll::Ready.
 // (Always remove the event-listener from the Option)
-impl<T> Stream for Inbox<T> {
-    type Item = Result<T, Halted>;
+impl<M> Stream for Inbox<M> {
+    type Item = Result<M, Halted>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -180,13 +180,13 @@ impl<T> Stream for Inbox<T> {
     }
 }
 
-impl<T> Drop for Inbox<T> {
+impl<M> Drop for Inbox<M> {
     fn drop(&mut self) {
         self.channel.remove_inbox()
     }
 }
 
-impl<T> Debug for Inbox<T> {
+impl<M> Debug for Inbox<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Inbox")
             .field("listener", &self.listener)
@@ -202,14 +202,14 @@ impl<T> Debug for Inbox<T> {
 /// A future returned by receiving messages from an `Inbox`.
 ///
 /// This can be `.await`-ed to get the message from the `Inbox`.
-pub struct Rcv<'a, T> {
-    inbox: &'a mut Inbox<T>,
+pub struct Rcv<'a, M> {
+    inbox: &'a mut Inbox<M>,
 }
 
-impl<'a, T> Unpin for Rcv<'a, T> {}
+impl<'a, M> Unpin for Rcv<'a, M> {}
 
-impl<'a, T> Future for Rcv<'a, T> {
-    type Output = Result<T, RecvError>;
+impl<'a, M> Future for Rcv<'a, M> {
+    type Output = Result<M, RecvError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
@@ -245,7 +245,7 @@ impl<'a, T> Future for Rcv<'a, T> {
     }
 }
 
-impl<'a, T> Debug for Rcv<'a, T> {
+impl<'a, M> Debug for Rcv<'a, M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Rcv").field("inbox", &self.inbox).finish()
     }

@@ -1,16 +1,16 @@
 use crate::*;
 use futures::Future;
-use std::{sync::Arc};
+use std::sync::Arc;
 
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].
-/// 
+///
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {
-/// let (child, address) = 
+/// let (child, address) =
 ///     spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
 ///         loop {
 ///             let msg = inbox.recv().await;
@@ -19,12 +19,12 @@ use std::{sync::Arc};
 ///     });
 ///# }
 /// ```
-pub fn spawn<T, R, Fun, Fut>(config: Config, fun: Fun) -> (Child<R>, Address<T>)
+pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> (Child<E, Channel<M>>, Address<M>)
 where
-    Fun: FnOnce(Inbox<T>) -> Fut + Send + 'static,
-    Fut: Future<Output = R> + Send + 'static,
-    R: Send + 'static,
-    T: Send + 'static,
+    Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+    Fut: Future<Output = E> + Send + 'static,
+    E: Send + 'static,
+    M: Send + 'static,
 {
     let (inbox, address, channel) = setup_channel(config.capacity);
 
@@ -37,16 +37,16 @@ where
 
 /// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
 /// and [Address]. The `Process`es are spawned with [Inbox]es.
-/// 
+///
 /// The amount of `Process`es that are spawned is equal to the length of the iterator.
 /// Every process get's access to a single item within the iterator as it's first argument.
-/// 
+///
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {
-/// let (child, address) = 
+/// let (child, address) =
 ///     spawn_pooled(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
 ///         loop {
 ///             let msg = inbox.recv().await;
@@ -55,16 +55,16 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_pooled<T, R, I, Fun, Fut>(
+pub fn spawn_many<M, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<R>, Address<T>)
+) -> (ChildPool<E, Channel<M>>, Address<M>)
 where
-    Fun: FnOnce(I, Inbox<T>) -> Fut + Send + 'static + Clone,
-    Fut: Future<Output = R> + Send + 'static,
-    R: Send + 'static,
-    T: Send + 'static,
+    Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
+    Fut: Future<Output = E> + Send + 'static,
+    E: Send + 'static,
+    M: Send + 'static,
     I: Send + 'static,
 {
     let iterator = iter.into_iter();

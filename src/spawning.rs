@@ -47,7 +47,7 @@ where
 ///# #[tokio::main]
 ///# async fn main() {
 /// let (child, address) =
-///     spawn_pooled(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
+///     spawn_many(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
 ///         loop {
 ///             let msg = inbox.recv().await;
 ///             println!("Received message on actor {i}: {msg:?}");

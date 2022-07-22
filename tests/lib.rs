@@ -18,7 +18,7 @@ async fn spawn_await_address() {
         let () = pending().await;
     });
     child.abort();
-    address.await;
+    address.exit().await;
 }
 
 #[tokio::test]
@@ -55,7 +55,7 @@ async fn spawn_and_drop() {
         },
     );
     drop(child);
-    address.await;
+    address.exit().await;
 }
 
 #[tokio::test]
@@ -69,7 +69,7 @@ async fn spawn_and_drop_detached() {
     drop(child);
     tokio::time::sleep(Duration::from_millis(10)).await;
     address.send(()).await.unwrap();
-    address.await;
+    address.exit().await;
 }
 
 #[tokio::test]

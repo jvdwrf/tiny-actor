@@ -7,14 +7,14 @@ use crate::*;
 /// can be awaited, which will return when the `Actor` has exited.
 #[must_use = "If all Addresses are dropped, the Channel is closed."]
 pub struct Address<M> {
-    channel: Arc<Channel<M>>,
+    channel: Arc<InnerChannel<M>>,
 }
 
 impl<M> Address<M> {
     /// Create a new address from a Channel.
     ///
     /// This does not increment the address-count.
-    pub(crate) fn from_channel(channel: Arc<Channel<M>>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<InnerChannel<M>>) -> Self {
         Self { channel }
     }
 
@@ -110,7 +110,7 @@ impl<M> Address<M> {
 
 impl<M> Clone for Address<M> {
     fn clone(&self) -> Self {
-        self.channel.add_sender();
+        self.channel.add_senders(1);
         Self {
             channel: self.channel.clone(),
         }
@@ -119,7 +119,7 @@ impl<M> Clone for Address<M> {
 
 impl<M> Drop for Address<M> {
     fn drop(&mut self) {
-        if self.channel.remove_sender() == 1 {
+        if self.channel.remove_senders(1) == 1 {
             self.close();
         }
     }

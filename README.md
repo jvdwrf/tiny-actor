@@ -102,7 +102,7 @@ async fn main() {
                 },
             }
         }
-    });
+    }).await;
 
     address.send(10).await.unwrap();
     address.send(5).await.unwrap();
@@ -138,7 +138,7 @@ async fn main() {
             link: Link::Attached(Duration::from_secs(1)),
             capacity: Capacity::Unbounded(BackPressure {
                 start_at: 5,
-                timeout: Duration::from_nanos(25),
+                base: Duration::from_nanos(25),
                 growth: Growth::Exponential(1.3),
             }),
         },
@@ -159,7 +159,7 @@ async fn main() {
                 }
             }
         },
-    );
+    ).await;
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 

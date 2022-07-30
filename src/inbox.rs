@@ -33,12 +33,16 @@ impl<M> Inbox<M> {
         }
     }
 
+    pub(crate) fn channel(&self) -> &Arc<Channel<M>> {
+        &self.channel
+    }
+
     /// Create a new inbox from a channel. Returns `None` if the `Channel` has exited.
     ///  
     /// This increments the inbox-count automatically
     pub(crate) fn try_create(channel: Arc<Channel<M>>) -> Option<Self> {
         match channel.try_add_inbox() {
-            Ok(()) => Some(Self {
+            Ok(_) => Some(Self {
                 channel,
                 listener: None,
                 signaled_halt: false,
@@ -182,7 +186,7 @@ impl<M> Stream for Inbox<M> {
 
 impl<M> Drop for Inbox<M> {
     fn drop(&mut self) {
-        self.channel.remove_inbox()
+        self.channel.remove_inbox();
     }
 }
 

@@ -1,10 +1,14 @@
 use crate::*;
 use futures::Future;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc, task::Poll};
+use tokio::{sync::oneshot, task::JoinHandle};
 
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].
 ///
+/// This will immeadeately start the spawning. `await`-ing the [Spawn]-future will
+/// wait until the [Channel] is fully initialized.
+/// 
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
@@ -16,23 +20,92 @@ use std::sync::Arc;
 ///             let msg = inbox.recv().await;
 ///             println!("Received message: {msg:?}");
 ///         }
-///     });
+///     }).await;
 ///# }
 /// ```
-pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> (Child<E, Channel<M>>, Address<M>)
+pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> Spawn<E, M>
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
     M: Send + 'static,
 {
-    let (inbox, address, channel) = setup_channel(config.capacity);
+    Spawn::new(config, fun)
+}
 
-    let handle = tokio::task::spawn(async move { fun(inbox).await });
+pub struct Spawn<E: Send + 'static, M: Send + 'static> {
+    inner: Option<(Child<E, Channel<M>>, Address<M>)>,
+}
 
-    let child = Child::new(channel, handle, config.link);
+impl<E: Send + 'static, M: Send + 'static> Spawn<E, M> {
+    pub fn new<Fun, Fut>(config: Config, fun: Fun) -> Self
+    where
+        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+    {
+        let channel = Arc::new(Channel::<M>::new(1, 1, config.capacity));
+        channel.set_spawn_count(1);
+        let address = Address::from_channel(channel.clone());
+        let inbox = Inbox::from_channel(channel.clone());
 
-    (child, address)
+        let handle = tokio::task::spawn(async move {
+            inbox.channel().decr_spawn_count();
+            fun(inbox).await
+        });
+
+        let child = Child::new(channel, handle, config.link);
+
+        Self {
+            inner: Some((child, address)),
+        }
+    }
+
+    fn channel(&self) -> &Channel<M> {
+        self.inner.as_ref().unwrap().1.channel()
+    }
+}
+
+impl<M, E> Unpin for Spawn<E, M>
+where
+    M: Send + 'static,
+    E: Send + 'static,
+{
+}
+
+impl<M, E> Future for Spawn<E, M>
+where
+    M: Send + 'static,
+    E: Send + 'static,
+{
+    type Output = (Child<E, Channel<M>>, Address<M>);
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.channel().spawn_count() == 0 {
+            return Poll::Ready(self.as_mut().inner.take().unwrap());
+        }
+
+        let mut waker_guard = self.channel().spawn_waker.lock().unwrap();
+
+        match &mut *waker_guard {
+            Some(waker) => {
+                if !waker.will_wake(cx.waker()) {
+                    *waker_guard = Some(cx.waker().clone());
+                }
+            }
+            None => *waker_guard = Some(cx.waker().clone()),
+        }
+
+        drop(waker_guard);
+
+        if self.channel().spawn_count() == 0 {
+            Poll::Ready(self.as_mut().inner.take().unwrap())
+        } else {
+            Poll::Pending
+        }
+    }
 }
 
 /// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
@@ -47,7 +120,7 @@ where
 ///# #[tokio::main]
 ///# async fn main() {
 /// let (child, address) =
-///     spawn_pooled(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
+///     spawn_many(0..5, Config::default(), |i, mut inbox: Inbox<u32>| async move {
 ///         loop {
 ///             let msg = inbox.recv().await;
 ///             println!("Received message on actor {i}: {msg:?}");
@@ -70,23 +143,21 @@ where
     let iterator = iter.into_iter();
     let mut handles = Vec::with_capacity(iterator.size_hint().0);
 
-    let (inbox, address, channel) = setup_channel(config.capacity);
+    let channel = Arc::new(Channel::<M>::new(1, 0, config.capacity));
+    let address = Address::from_channel(channel.clone());
 
     for i in iterator {
         let fun = fun.clone();
-        let inbox = inbox._clone();
-        let handle = tokio::task::spawn(async move { fun(i, inbox).await });
+        let channel = address.channel().clone();
+        let handle = tokio::task::spawn(async move {
+            channel.add_inbox();
+            let inbox = Inbox::from_channel(channel);
+            fun(i, inbox).await
+        });
         handles.push(handle);
     }
 
     let children = ChildPool::new(channel, handles, config.link);
 
     (children, address)
-}
-
-fn setup_channel<T>(capacity: Capacity) -> (Inbox<T>, Address<T>, Arc<Channel<T>>) {
-    let channel = Arc::new(Channel::new(1, 1, capacity));
-    let inbox = Inbox::from_channel(channel.clone());
-    let address = Address::from_channel(channel.clone());
-    (inbox, address, channel)
 }

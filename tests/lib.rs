@@ -7,7 +7,8 @@ use tiny_actor::{spawn, spawn_many, BackPressure, Capacity, Config, Inbox, Link,
 async fn spawn_and_abort() {
     let (mut child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
-    });
+    })
+    .await;
     child.abort();
     assert!(child.await.unwrap_err().is_abort());
 }
@@ -16,20 +17,21 @@ async fn spawn_and_abort() {
 async fn spawn_await_address() {
     let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
         let () = pending().await;
-    });
+    })
+    .await;
     child.abort();
     address.await;
 }
 
 #[tokio::test]
 async fn spawn_and_panic() {
-    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move { panic!() });
+    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move { panic!() }).await;
     assert!(child.await.unwrap_err().is_panic());
 }
 
 #[tokio::test]
 async fn spawn_and_normal_exit() {
-    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {});
+    let (child, _address) = spawn(Config::default(), |_: Inbox<()>| async move {}).await;
     assert!(child.await.is_ok());
 }
 
@@ -37,7 +39,8 @@ async fn spawn_and_normal_exit() {
 async fn spawn_and_halt() {
     let (child, _address) = spawn(Config::default(), |mut inbox: Inbox<()>| async move {
         assert_eq!(inbox.recv().await.unwrap_err(), RecvError::Halted);
-    });
+    })
+    .await;
     child.halt();
     assert!(child.await.is_ok());
 }
@@ -53,7 +56,8 @@ async fn spawn_and_drop() {
             assert_eq!(inbox.recv().await.unwrap_err(), RecvError::Halted);
             let () = pending().await;
         },
-    );
+    )
+    .await;
     drop(child);
     address.await;
 }
@@ -65,7 +69,8 @@ async fn spawn_and_drop_detached() {
         |mut inbox: Inbox<()>| async move {
             assert_eq!(inbox.recv().await.unwrap(), ());
         },
-    );
+    )
+    .await;
     drop(child);
     tokio::time::sleep(Duration::from_millis(10)).await;
     address.send(()).await.unwrap();
@@ -74,41 +79,31 @@ async fn spawn_and_drop_detached() {
 
 #[tokio::test]
 async fn base_counts() {
-    let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
-        let () = pending().await;
-    });
+    let (mut child, address) = spawn(Config::default(), |inbox: Inbox<()>| async move {
+        pending::<()>().await;
+        drop(inbox);
+    })
+    .await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
     assert_eq!(child.address_count(), 1);
-    assert_eq!(address.inbox_count(), 1);
+    assert_eq!(child.inbox_count(), 1);
     assert_eq!(address.msg_count(), 0);
     child.abort();
 }
 
 #[tokio::test]
 async fn address_counts() {
-    let (mut child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
-        let () = pending().await;
-    });
+    let (mut child, address) = spawn(Config::default(), |inbox: Inbox<()>| async move {
+        pending::<()>().await;
+        drop(inbox);
+    })
+    .await;
     assert_eq!(child.address_count(), 1);
     let address2 = address.clone();
     assert_eq!(child.address_count(), 2);
     drop(address2);
     assert_eq!(child.address_count(), 1);
     child.abort();
-}
-
-#[tokio::test]
-async fn child_to_pool() {
-    let (child, address) = spawn(Config::default(), |_: Inbox<()>| async move {
-        let () = pending().await;
-    });
-    assert_eq!(address.inbox_count(), 1);
-    let pool = child
-        .into_dyn()
-        .try_spawn(|mut inbox: Inbox<()>| async move {
-            inbox.recv().await.unwrap_err();
-        })
-        .unwrap();
-    assert_eq!(pool.inbox_count(), 2);
 }
 
 #[tokio::test]
@@ -120,6 +115,7 @@ async fn inbox_counts() {
             inbox.recv().await.unwrap_err();
         },
     );
+    tokio::time::sleep(Duration::from_millis(1)).await;
     let mut pool = pool.into_dyn();
     assert_eq!(pool.inbox_count(), 4);
 

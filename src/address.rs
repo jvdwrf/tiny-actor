@@ -28,6 +28,10 @@ impl<M> Address<M> {
         }
     }
 
+    pub(crate) fn channel(&self) -> &Arc<Channel<M>> {
+        &self.channel
+    }
+
     /// Attempt to send a message into the `Channel`, this can always fail if the `Channel` is
     /// `closed`.
     ///
@@ -105,9 +109,15 @@ impl<M> Address<M> {
         self.channel.inboxes_exited()
     }
 
-    /// Get the [Capacity] of the `Channel`.
+    /// Get the [Capacity] of the [Channel].
     pub fn capacity(&self) -> &Capacity {
         self.channel.capacity()
+    }
+
+    /// Get an [Address] to the [Channel].
+    pub fn get_address(&self) -> Address<M> {
+        self.channel.add_address();
+        Address::from_channel(self.channel.clone())
     }
 }
 

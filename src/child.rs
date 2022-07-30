@@ -618,7 +618,7 @@ mod test {
         let (child, _addr) = spawn(Config::default(), test_loop!()).await;
         matches!(child.into_dyn().downcast::<()>(), Ok(_));
 
-        let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!());
+        let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!()).await;
         matches!(pool.into_dyn().downcast::<()>(), Ok(_));
     }
 

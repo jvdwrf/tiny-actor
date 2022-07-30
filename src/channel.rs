@@ -5,7 +5,7 @@ use std::{
     any::Any,
     sync::{
         atomic::{AtomicI32, AtomicUsize, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, MutexGuard,
     },
     task::Waker,
 };
@@ -66,6 +66,10 @@ impl<M> Channel<M> {
 
     pub(crate) fn spawn_count(&self) -> usize {
         self.spawn_count.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn spawn_waker_guard(&self) -> MutexGuard<'_, Option<Waker>> {
+        self.spawn_waker.lock().unwrap()
     }
 
     /// Create a new channel, given an address count, inbox_count and capacity.

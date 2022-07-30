@@ -114,8 +114,7 @@ async fn inbox_counts() {
         |_, mut inbox: Inbox<()>| async move {
             inbox.recv().await.unwrap_err();
         },
-    );
-    tokio::time::sleep(Duration::from_millis(1)).await;
+    ).await;
     let mut pool = pool.into_dyn();
     assert_eq!(pool.inbox_count(), 4);
 
@@ -154,7 +153,7 @@ async fn pooled_messaging_split() {
                 },
             }
         }
-    });
+    }).await;
 
     for i in 0..30 {
         address.send(i).await.unwrap();

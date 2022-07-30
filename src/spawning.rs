@@ -1,14 +1,13 @@
 use crate::*;
 use futures::Future;
-use std::{marker::PhantomData, sync::Arc, task::Poll};
-use tokio::{sync::oneshot, task::JoinHandle};
+use std::{sync::Arc, task::Poll};
 
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].
 ///
 /// This will immeadeately start the spawning. `await`-ing the [Spawn]-future will
 /// wait until the [Channel] is fully initialized.
-/// 
+///
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
@@ -65,13 +64,6 @@ impl<E: Send + 'static, M: Send + 'static> Spawn<E, M> {
     }
 }
 
-impl<M, E> Unpin for Spawn<E, M>
-where
-    M: Send + 'static,
-    E: Send + 'static,
-{
-}
-
 impl<M, E> Future for Spawn<E, M>
 where
     M: Send + 'static,
@@ -87,8 +79,7 @@ where
             return Poll::Ready(self.as_mut().inner.take().unwrap());
         }
 
-        let mut waker_guard = self.channel().spawn_waker.lock().unwrap();
-
+        let mut waker_guard = self.channel().spawn_waker_guard();
         match &mut *waker_guard {
             Some(waker) => {
                 if !waker.will_wake(cx.waker()) {
@@ -97,7 +88,6 @@ where
             }
             None => *waker_guard = Some(cx.waker().clone()),
         }
-
         drop(waker_guard);
 
         if self.channel().spawn_count() == 0 {
@@ -106,6 +96,13 @@ where
             Poll::Pending
         }
     }
+}
+
+impl<M, E> Unpin for Spawn<E, M>
+where
+    M: Send + 'static,
+    E: Send + 'static,
+{
 }
 
 /// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
@@ -125,14 +122,14 @@ where
 ///             let msg = inbox.recv().await;
 ///             println!("Received message on actor {i}: {msg:?}");
 ///         }
-///     });
+///     }).await;
 ///# }
 /// ```
 pub fn spawn_many<M, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Channel<M>>, Address<M>)
+) -> SpawnMany<E, M>
 where
     Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
     Fut: Future<Output = E> + Send + 'static,
@@ -140,24 +137,87 @@ where
     M: Send + 'static,
     I: Send + 'static,
 {
-    let iterator = iter.into_iter();
-    let mut handles = Vec::with_capacity(iterator.size_hint().0);
+    SpawnMany::new(iter, config, fun)
+}
 
-    let channel = Arc::new(Channel::<M>::new(1, 0, config.capacity));
-    let address = Address::from_channel(channel.clone());
+pub struct SpawnMany<E: Send + 'static, M: Send + 'static> {
+    inner: Option<(ChildPool<E, Channel<M>>, Address<M>)>,
+}
 
-    for i in iterator {
-        let fun = fun.clone();
-        let channel = address.channel().clone();
-        let handle = tokio::task::spawn(async move {
-            channel.add_inbox();
-            let inbox = Inbox::from_channel(channel);
-            fun(i, inbox).await
-        });
-        handles.push(handle);
+impl<E: Send + 'static, M: Send + 'static> SpawnMany<E, M> {
+    pub fn new<Fun, Fut, I>(iter: impl IntoIterator<Item = I>, config: Config, fun: Fun) -> Self
+    where
+        Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
+        Fut: Future<Output = E> + Send + 'static,
+        I: Send + 'static,
+    {
+        let iterator = iter.into_iter().collect::<Vec<_>>();
+        let mut handles = Vec::with_capacity(iterator.len());
+
+        let channel = Arc::new(Channel::<M>::new(1, iterator.len(), config.capacity));
+        channel.set_spawn_count(iterator.len());
+        let address = Address::from_channel(channel.clone());
+
+        for i in iterator {
+            let fun = fun.clone();
+            let channel = address.channel().clone();
+            let handle = tokio::task::spawn(async move {
+                channel.decr_spawn_count();
+                let inbox = Inbox::from_channel(channel);
+                fun(i, inbox).await
+            });
+            handles.push(handle);
+        }
+
+        let child = ChildPool::new(channel, handles, config.link);
+
+        Self {
+            inner: Some((child, address)),
+        }
     }
 
-    let children = ChildPool::new(channel, handles, config.link);
+    fn channel(&self) -> &Channel<M> {
+        self.inner.as_ref().unwrap().1.channel()
+    }
+}
 
-    (children, address)
+impl<M, E> Future for SpawnMany<E, M>
+where
+    M: Send + 'static,
+    E: Send + 'static,
+{
+    type Output = (ChildPool<E, Channel<M>>, Address<M>);
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        if self.channel().spawn_count() == 0 {
+            return Poll::Ready(self.as_mut().inner.take().unwrap());
+        }
+
+        let mut waker_guard = self.channel().spawn_waker_guard();
+        match &mut *waker_guard {
+            Some(waker) => {
+                if !waker.will_wake(cx.waker()) {
+                    *waker_guard = Some(cx.waker().clone());
+                }
+            }
+            None => *waker_guard = Some(cx.waker().clone()),
+        }
+        drop(waker_guard);
+
+        if self.channel().spawn_count() == 0 {
+            Poll::Ready(self.as_mut().inner.take().unwrap())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl<M, E> Unpin for SpawnMany<E, M>
+where
+    M: Send + 'static,
+    E: Send + 'static,
+{
 }

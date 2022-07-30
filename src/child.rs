@@ -51,40 +51,11 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
     ///
     /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
+        self.channel.close();
         let was_aborted = self.is_aborted;
         self.is_aborted = true;
         self.handle.as_ref().unwrap().abort();
         !was_aborted
-    }
-
-    /// Close the `Channel`.
-    pub fn close(&self) -> bool {
-        self.channel.close()
-    }
-
-    /// Halt the `Process`.
-    pub fn halt(&self) {
-        self.channel.halt_n(1)
-    }
-
-    /// Get the amount of messages in the [Channel].
-    pub fn msg_count(&self) -> usize {
-        self.channel.msg_count()
-    }
-
-    /// Get the current amount of [Addresses](Address).
-    pub fn address_count(&self) -> usize {
-        self.channel.address_count()
-    }
-
-    /// Get the current amount of [Inboxes](Inbox).
-    pub fn inbox_count(&self) -> usize {
-        self.channel.inbox_count()
-    }
-
-    /// Whether the `Channel` is closed.
-    pub fn is_closed(&self) -> bool {
-        self.channel.is_closed()
     }
 
     /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
@@ -102,19 +73,9 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
         &self.link
     }
 
-    /// Whether the `tokio::task` has exited.
-    pub fn exited(&self) -> bool {
+    /// Whether the `tokio::task` has finished.
+    pub fn is_finished(&self) -> bool {
         self.handle.as_ref().unwrap().is_finished()
-    }
-
-    /// Whether the [Inbox] has exited.
-    pub fn inbox_exited(&self) -> bool {
-        self.channel.inboxes_exited()
-    }
-
-    /// Get the [Capacity] of the `Channel`.
-    pub fn capacity(&self) -> &Capacity {
-        self.channel.capacity()
     }
 
     /// Whether the `Actor` has been aborted.
@@ -151,6 +112,8 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
             }),
         }
     }
+
+    gen::any_channel_methods!();
 }
 
 impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
@@ -169,7 +132,7 @@ impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
 impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for Child<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if !self.is_aborted && !self.exited() {
+            if !self.is_aborted && !self.is_finished() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
@@ -201,6 +164,10 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Future for Child<E, C> {
             .map_err(|e| e.into())
     }
 }
+
+//------------------------------------------------------------------------------------------------
+//  ChildPool
+//------------------------------------------------------------------------------------------------
 
 /// A [ChildPool] is similar to a [Child], except that the `Actor` can have more
 /// than one `Process`. A [ChildPool] can be streamed to get the exit-values of
@@ -249,47 +216,13 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     ///
     /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
+        self.channel.close();
         let was_aborted = self.is_aborted;
         self.is_aborted = true;
         for handle in self.handles.as_ref().unwrap() {
             handle.abort()
         }
         !was_aborted
-    }
-
-    /// Close the `Channel`.
-    pub fn close(&self) -> bool {
-        self.channel.close()
-    }
-
-    /// Halt all `Processes`.
-    pub fn halt_all(&self) {
-        self.channel.halt_n(u32::MAX)
-    }
-
-    /// Halt `n` `Processes`.
-    pub fn halt_some(&self, n: u32) {
-        self.channel.halt_n(n)
-    }
-
-    /// Get the amount of messages in the `Channel`.
-    pub fn msg_count(&self) -> usize {
-        self.channel.msg_count()
-    }
-
-    /// Get the current amount of [Addresses](Address).
-    pub fn address_count(&self) -> usize {
-        self.channel.address_count()
-    }
-
-    /// Get the amount of messages in the `Channel`.
-    pub fn inbox_count(&self) -> usize {
-        self.channel.inbox_count()
-    }
-
-    /// Whether the `Channel` is closed.
-    pub fn is_closed(&self) -> bool {
-        self.channel.is_closed()
     }
 
     /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
@@ -338,11 +271,6 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         self.is_aborted
     }
 
-    /// Get the [Capacity] of the `Channel`.
-    pub fn capacity(&self) -> &Capacity {
-        self.channel.capacity()
-    }
-
     /// Convert the [ChildPool] into a [Child], if there is exactly one child in the
     /// pool.
     pub fn try_into_child(self) -> Result<Child<E, C>, Self> {
@@ -364,25 +292,26 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     /// This method can fail for 2 reasons:
     /// * The [Inbox]-type does not match that of the `Channel`.
     /// * The `Channel` has already exited.
-    pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
+    pub fn try_spawn<M, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
-        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
+        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
         Fut: Future<Output = E> + Send + 'static,
-        R: Send + 'static,
+        M: Send + 'static,
         E: Send + 'static,
     {
-        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
+        let channel = match Arc::downcast::<Channel<M>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
             Err(_) => return Err(TrySpawnError::Exited(fun)),
         };
 
-        match Inbox::try_create(typed_channel) {
-            Some(inbox) => {
+        match channel.try_add_inbox() {
+            Ok(_) => {
+                let inbox = Inbox::from_channel(channel);
                 let handle = tokio::task::spawn(async move { fun(inbox).await });
                 self.handles.as_mut().unwrap().push(handle);
                 Ok(())
             }
-            None => Err(TrySpawnError::Exited(fun)),
+            Err(_) => Err(TrySpawnError::Exited(fun)),
         }
     }
 
@@ -404,6 +333,8 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
             }),
         }
     }
+
+    gen::any_channel_methods!();
 }
 
 impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
@@ -429,13 +360,14 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
         Fut: Future<Output = E> + Send + 'static,
         E: Send + 'static,
     {
-        match Inbox::try_create(self.channel.clone()) {
-            Some(inbox) => {
+        match self.channel.try_add_inbox() {
+            Ok(_) => {
+                let inbox = Inbox::from_channel(self.channel.clone());
                 let handle = tokio::task::spawn(async move { fun(inbox).await });
                 self.handles.as_mut().unwrap().push(handle);
                 Ok(())
             }
-            None => Err(SpawnError(fun)),
+            Err(_) => Err(SpawnError(fun)),
         }
     }
 }
@@ -469,7 +401,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for ChildPool<E, C> {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
-                    self.halt_all();
+                    self.halt();
                     let handles = self.handles.take().unwrap();
                     tokio::task::spawn(async move {
                         tokio::time::sleep(abort_timer).await;
@@ -587,7 +519,7 @@ mod test {
     #[tokio::test]
     async fn child_try_spawn_exited() {
         let (child, mut addr) = spawn_one(Config::default(), test_loop!());
-        addr.halt_all();
+        addr.halt();
         (&mut addr).await;
 
         let res = child.into_dyn().try_spawn(test_loop!());
@@ -616,7 +548,7 @@ mod test {
     #[tokio::test]
     async fn child_spawn_exited() {
         let (mut child, mut addr) = spawn_one(Config::default(), test_loop!());
-        addr.halt_all();
+        addr.halt();
         (&mut addr).await;
 
         let res = child.spawn(test_loop!());

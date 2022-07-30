@@ -1,14 +1,12 @@
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
-use std::{
-    any::Any,
-    sync::{
-        atomic::{AtomicI32, AtomicUsize, Ordering},
-        Arc, Mutex, MutexGuard,
-    },
-    task::Waker,
-};
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+
+pub mod any_channel;
+mod receiving;
+mod sending;
+pub use {any_channel::*, receiving::*, sending::*};
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 /// This is wrapped in an Arc to allow sharing between them.
@@ -17,7 +15,6 @@ pub struct Channel<M> {
     queue: ConcurrentQueue<M>,
     /// The capacity of the channel
     capacity: Capacity,
-
     /// The amount of addresses associated to this channel.
     /// Once this is 0, not more addresses can be created and the Channel is closed.
     address_count: AtomicUsize,
@@ -25,14 +22,12 @@ pub struct Channel<M> {
     /// Once this is 0, it is impossible to spawn new processes, and the Channel.
     /// has exited.
     inbox_count: AtomicUsize,
-
     /// Subscribe when trying to receive a message from this channel.
     recv_event: Event,
     /// Subscribe when trying to send a message into this channel.
     send_event: Event,
     /// Subscribe when waiting for Actor to exit.
     exit_event: Event,
-
     /// The amount of processes that should still be halted.
     /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
@@ -56,16 +51,6 @@ impl<M> Channel<M> {
             exit_event: Event::new(),
             halt_count: AtomicI32::new(0),
         }
-    }
-
-    
-
-    /// Add an inbox to the channel, incrementing inbox-count by 1. Afterwards,
-    /// a new Inbox may be created from this channel.
-    ///
-    /// Returns the old inbox-count
-    pub(crate) fn add_inbox(&self) -> usize {
-        self.inbox_count.fetch_add(1, Ordering::AcqRel)
     }
 
     /// Sets the inbox-count
@@ -235,7 +220,7 @@ impl<M> Channel<M> {
     ///
     /// # Notifies
     /// * `n` recv-listeners
-    pub(crate) fn halt_n(&self, n: u32) {
+    pub(crate) fn halt_some(&self, n: u32) {
         // todo: test this
         let n = i32::try_from(n).unwrap_or(i32::MAX);
 
@@ -280,7 +265,7 @@ impl<M> Channel<M> {
     }
 
     /// Whether all inboxes linked to this channel have exited.
-    pub(crate) fn inboxes_exited(&self) -> bool {
+    pub(crate) fn has_exited(&self) -> bool {
         self.inbox_count.load(Ordering::Acquire) == 0
     }
 
@@ -297,50 +282,6 @@ impl<M> Channel<M> {
     /// Get a new exit-event listener
     pub(crate) fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
-    }
-}
-
-/// A channel, without information about it's message type. This channel misses any methods
-/// related to sending or receiving.
-pub trait AnyChannel {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-    fn close(&self) -> bool;
-    fn halt_n(&self, n: u32);
-    fn inbox_count(&self) -> usize;
-    fn msg_count(&self) -> usize;
-    fn address_count(&self) -> usize;
-    fn is_closed(&self) -> bool;
-    fn capacity(&self) -> &Capacity;
-    fn inboxes_exited(&self) -> bool;
-}
-
-impl<M: Send + 'static> AnyChannel for Channel<M> {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
-    fn close(&self) -> bool {
-        self.close()
-    }
-    fn halt_n(&self, n: u32) {
-        self.halt_n(n)
-    }
-    fn inbox_count(&self) -> usize {
-        self.inbox_count()
-    }
-    fn msg_count(&self) -> usize {
-        self.msg_count()
-    }
-    fn address_count(&self) -> usize {
-        self.address_count()
-    }
-    fn is_closed(&self) -> bool {
-        self.is_closed()
-    }
-    fn capacity(&self) -> &Capacity {
-        self.capacity()
-    }
-    fn inboxes_exited(&self) -> bool {
-        self.inboxes_exited()
     }
 }
 
@@ -370,7 +311,7 @@ mod test {
         channel.close();
 
         assert!(channel.is_closed());
-        assert!(!channel.inboxes_exited());
+        assert!(!channel.has_exited());
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
         assert_eq!(channel.take_next_msg(), Err(()));
         listeners.assert_notified(Assert {
@@ -388,7 +329,7 @@ mod test {
         channel.remove_address();
 
         assert!(channel.is_closed());
-        assert!(!channel.inboxes_exited());
+        assert!(!channel.has_exited());
         assert_eq!(channel.address_count(), 0);
         assert_eq!(channel.inbox_count(), 1);
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
@@ -408,7 +349,7 @@ mod test {
         channel.remove_inbox();
 
         assert!(channel.is_closed());
-        assert!(channel.inboxes_exited());
+        assert!(channel.has_exited());
         assert_eq!(channel.inbox_count(), 0);
         assert_eq!(channel.address_count(), 1);
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
@@ -452,8 +393,8 @@ mod test {
     fn add_inbox_with_0_receivers() {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
-        channel.add_inbox();
-        assert_eq!(channel.inbox_count(), 1);
+        matches!(channel.try_add_inbox(), Err(_));
+        assert_eq!(channel.inbox_count(), 0);
     }
 
     #[test]

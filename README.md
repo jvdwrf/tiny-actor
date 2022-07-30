@@ -167,7 +167,7 @@ async fn main() {
         address.send(num).await.unwrap()
     }
 
-    pool.halt_all();
+    pool.halt();
     let exits = pool.collect::<Vec<_>>().await;
 
     for exit in exits {

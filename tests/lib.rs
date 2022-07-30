@@ -124,7 +124,7 @@ async fn inbox_counts() {
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(pool.inbox_count(), 2);
 
-    pool.halt_all();
+    pool.halt();
     tokio::time::sleep(Duration::from_millis(10)).await;
     assert_eq!(pool.inbox_count(), 0);
 }
@@ -152,7 +152,7 @@ async fn pooled_messaging_split() {
     }
 
     tokio::time::sleep(Duration::from_millis(20)).await;
-    address.halt_all();
+    address.halt();
 
     let res = pool
         .map(|e| e.unwrap().unwrap())

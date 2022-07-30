@@ -1,0 +1,89 @@
+macro_rules! any_channel_methods {
+    () => {
+        /// Close the [Channel].
+        pub fn close(&self) -> bool {
+            self.channel.close()
+        }
+
+        /// Halt all processes.
+        pub fn halt(&self) {
+            self.channel.halt_some(u32::MAX)
+        }
+
+        /// Halt n processes.
+        pub fn halt_some(&self, n: u32) {
+            self.channel.halt_some(n)
+        }
+
+        /// Get the amount of [Inboxes](Inbox).
+        pub fn inbox_count(&self) -> usize {
+            self.channel.inbox_count()
+        }
+
+        /// Get the amount of messages in the [Channel].
+        pub fn msg_count(&self) -> usize {
+            self.channel.msg_count()
+        }
+
+        /// Get the amount of [Addresses](Address) of the [Channel].
+        pub fn address_count(&self) -> usize {
+            self.channel.address_count()
+        }
+
+        /// Whether the [Channel] is closed.
+        pub fn is_closed(&self) -> bool {
+            self.channel.is_closed()
+        }
+
+        /// Get the [Capacity] of the [Channel]. This cannot be changed.
+        pub fn capacity(&self) -> &Capacity {
+            self.channel.capacity()
+        }
+
+        /// Whether all [Inboxes](Inbox) have been dropped.
+        pub fn has_exited(&self) -> bool {
+            self.channel.has_exited()
+        }
+    };
+}
+pub(crate) use any_channel_methods;
+
+macro_rules! send_methods {
+    () => {
+        /// Attempt to send a message into the [Channel].
+        ///
+        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will fail.
+        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        ///
+        /// For `bounded` channels, this method is the same as [send_now](Address::send_now).
+        pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
+            self.channel.try_send(msg)
+        }
+
+        /// Attempt to send a message into the [Channel].
+        ///
+        /// In the case of an `unbounded` [Channel], any [BackPressure] is ignored.
+        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        ///
+        /// For `bounded` channels, this method is the same as [try_send](Address::send_now).
+        pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
+            self.channel.send_now(msg)
+        }
+
+        /// Attempt to send a message into the [Channel].
+        ///
+        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will
+        /// wait and then send the message.
+        /// In the case of a `bounded` [Channel], when it is full, this will wait untill space is
+        /// available.
+        pub fn send(&self, msg: M) -> Snd<'_, M> {
+            self.channel.send(msg)
+        }
+
+        /// Same as [send](Address::send) but it blocking the OS-thread.
+        pub fn send_blocking(&self, msg: M) -> Result<(), SendError<M>> {
+            self.channel.send_blocking(msg)
+        }
+    };
+}
+pub(crate) use send_methods;

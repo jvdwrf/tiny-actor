@@ -1,14 +1,15 @@
 #![doc = include_str!("../README.md")]
 
-pub(crate) mod address;
-pub(crate) mod channel;
-pub(crate) mod child;
-pub(crate) mod config;
-pub(crate) mod inbox;
-pub(crate) mod spawning;
+mod address;
+mod channel;
+mod child;
+mod config;
+mod inbox;
+mod spawning;
+mod gen;
 
 pub use address::*;
-pub(crate) use channel::*;
+pub use channel::*;
 pub use child::*;
 pub use config::*;
 pub use inbox::*;

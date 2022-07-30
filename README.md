@@ -132,7 +132,7 @@ use futures::stream::StreamExt;
 
 #[tokio::main]
 async fn main() {
-    let (pool, address) = spawn_many(
+    let (pool, address) = spawn_pooled(
         0..3,
         Config {
             link: Link::Attached(Duration::from_secs(1)),

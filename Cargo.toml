@@ -16,5 +16,4 @@ futures = "0.3.0"
 tokio = { version = "1.18", features = ["full"] }
 concurrent-queue = "1.2.2"
 thiserror = "1.0"
-actor-channel = { path = "../actor-channel" }
 

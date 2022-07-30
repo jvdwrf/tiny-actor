@@ -1,5 +1,5 @@
 use crate::*;
-use futures::{Future, FutureExt, Stream, task::Spawn};
+use futures::{task::Spawn, Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
@@ -121,95 +121,19 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
     pub fn is_aborted(&self) -> bool {
         self.is_aborted
     }
-}
 
-impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
-    ///
-    /// This transforms the [Child] into a [ChildPool].
-    ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
-    pub fn spawn<Fun, Fut>(
-        self,
-        fun: Fun,
-    ) -> Result<ChildPool<E, Channel<M>>, SpawnError<(Self, Fun)>>
-    where
-        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
-        Fut: Future<Output = E> + Send + 'static,
-        M: Send + 'static,
-        E: Send + 'static,
-    {
-        match Inbox::try_create(self.channel.clone()) {
-            Some(inbox) => {
-                let new_handle = tokio::task::spawn(async move { fun(inbox).await });
-
-                let (channel, old_handle, link, is_aborted) = self.into_parts();
-
-                Ok(ChildPool {
-                    channel: channel,
-                    handles: Some(vec![old_handle, new_handle]),
-                    link,
-                    is_aborted: is_aborted,
-                })
-            }
-            None => Err(SpawnError((self, fun))),
+    /// Convert the [Child] into a [ChildPool].
+    pub fn into_pool(self) -> ChildPool<E, C> {
+        let (channel, handle, link, is_aborted) = self.into_parts();
+        ChildPool {
+            channel,
+            handles: Some(vec![handle]),
+            link,
+            is_aborted,
         }
     }
 
-    /// Convert the `Child<T, Channel<M>>` into a `Child<T>`
-    pub fn into_dyn(self) -> Child<E> {
-        let parts = self.into_parts();
-        Child {
-            handle: Some(parts.1),
-            channel: parts.0,
-            link: parts.2,
-            is_aborted: parts.3,
-        }
-    }
-}
-
-impl<E: Send + 'static> Child<E> {
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
-    ///
-    /// This transforms the [Child] into a [ChildPool].
-    ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
-    pub fn try_spawn<R, Fun, Fut>(
-        self,
-        fun: Fun,
-    ) -> Result<ChildPool<E>, TrySpawnError<(Self, Fun)>>
-    where
-        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
-        Fut: Future<Output = E> + Send + 'static,
-        R: Send + 'static,
-        E: Send + 'static,
-    {
-        let channel = match self.channel.clone().into_any().downcast() {
-            Ok(channel) => channel,
-            Err(_) => return Err(TrySpawnError::IncorrectType((self, fun))),
-        };
-
-        match Inbox::try_create(channel) {
-            Some(inbox) => {
-                let new_handle = tokio::task::spawn(async move { fun(inbox).await });
-
-                let (channel, old_handle, link, is_aborted) = self.into_parts();
-
-                Ok(ChildPool {
-                    channel: channel,
-                    handles: Some(vec![old_handle, new_handle]),
-                    link,
-                    is_aborted: is_aborted,
-                })
-            }
-            None => Err(TrySpawnError::Exited((self, fun))),
-        }
-    }
-
+    /// Downcast the [Child<E>] to a [Child<E, Channel<M>>].
     pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self> {
         let (channel, handle, link, is_aborted) = self.into_parts();
         match channel.clone().into_any().downcast::<Channel<M>>() {
@@ -225,6 +149,19 @@ impl<E: Send + 'static> Child<E> {
                 link,
                 is_aborted,
             }),
+        }
+    }
+}
+
+impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
+    /// Convert the `Child<T, Channel<M>>` into a `Child<T>`
+    pub fn into_dyn(self) -> Child<E> {
+        let parts = self.into_parts();
+        Child {
+            handle: Some(parts.1),
+            channel: parts.0,
+            link: parts.2,
+            is_aborted: parts.3,
         }
     }
 }
@@ -405,9 +342,72 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     pub fn capacity(&self) -> &Capacity {
         self.channel.capacity()
     }
+
+    /// Convert the [ChildPool] into a [Child], if there is exactly one child in the
+    /// pool.
+    pub fn try_into_child(self) -> Result<Child<E, C>, Self> {
+        if self.handles.as_ref().unwrap().len() == 1 {
+            let (channel, mut handles, link, is_aborted) = self.into_parts();
+            Ok(Child {
+                channel,
+                handle: Some(handles.pop().unwrap()),
+                link,
+                is_aborted,
+            })
+        } else {
+            Err(self)
+        }
+    }
+
+    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    ///
+    /// This method can fail for 2 reasons:
+    /// * The [Inbox]-type does not match that of the `Channel`.
+    /// * The `Channel` has already exited.
+    pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
+    where
+        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
+        Fut: Future<Output = E> + Send + 'static,
+        R: Send + 'static,
+        E: Send + 'static,
+    {
+        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
+            Ok(channel) => channel,
+            Err(_) => return Err(TrySpawnError::Exited(fun)),
+        };
+
+        match Inbox::try_create(typed_channel) {
+            Some(inbox) => {
+                let handle = tokio::task::spawn(async move { fun(inbox).await });
+                self.handles.as_mut().unwrap().push(handle);
+                Ok(())
+            }
+            None => Err(TrySpawnError::Exited(fun)),
+        }
+    }
+
+    /// Downcast the [ChildPool<E>] to a [ChildPool<E, Channel<M>>]
+    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Channel<M>>, Self> {
+        let (channel, handles, link, is_aborted) = self.into_parts();
+        match channel.clone().into_any().downcast::<Channel<M>>() {
+            Ok(channel) => Ok(ChildPool {
+                handles: Some(handles),
+                channel,
+                link,
+                is_aborted,
+            }),
+            Err(_) => Err(ChildPool {
+                handles: Some(handles),
+                channel,
+                link,
+                is_aborted,
+            }),
+        }
+    }
 }
 
 impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
+    /// Convert the [ChildPool<E, Channel<M>] into a [ChildPool<E>].
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
         ChildPool {
@@ -436,53 +436,6 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
                 Ok(())
             }
             None => Err(SpawnError(fun)),
-        }
-    }
-}
-
-impl<E: Send + 'static> ChildPool<E> {
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
-    ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
-    pub fn try_spawn<R, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
-    where
-        Fun: FnOnce(Inbox<R>) -> Fut + Send + 'static,
-        Fut: Future<Output = E> + Send + 'static,
-        R: Send + 'static,
-        E: Send + 'static,
-    {
-        let typed_channel = match Arc::downcast(self.channel.clone().into_any()) {
-            Ok(channel) => channel,
-            Err(_) => return Err(TrySpawnError::Exited(fun)),
-        };
-
-        match Inbox::try_create(typed_channel) {
-            Some(inbox) => {
-                let handle = tokio::task::spawn(async move { fun(inbox).await });
-                self.handles.as_mut().unwrap().push(handle);
-                Ok(())
-            }
-            None => Err(TrySpawnError::Exited(fun)),
-        }
-    }
-
-    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Channel<M>>, Self> {
-        let (channel, handles, link, is_aborted) = self.into_parts();
-        match channel.clone().into_any().downcast::<Channel<M>>() {
-            Ok(channel) => Ok(ChildPool {
-                handles: Some(handles),
-                channel,
-                link,
-                is_aborted,
-            }),
-            Err(_) => Err(ChildPool {
-                handles: Some(handles),
-                channel,
-                link,
-                is_aborted,
-            }),
         }
     }
 }
@@ -615,27 +568,25 @@ mod test {
 
     #[tokio::test]
     async fn downcast_child() {
-        let (child, _addr) = spawn(Config::default(), test_loop!()).await;
+        let (child, _addr) = spawn(Config::default(), test_loop!());
         matches!(child.into_dyn().downcast::<()>(), Ok(_));
 
-        let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!()).await;
+        let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!());
         matches!(pool.into_dyn().downcast::<()>(), Ok(_));
     }
 
     #[tokio::test]
     async fn child_try_spawn_ok() {
-        let (child, _addr) = spawn(Config::default(), test_loop!()).await;
+        let (child, _addr) = spawn_one(Config::default(), test_loop!());
         tokio::time::sleep(Duration::from_millis(1)).await;
-        let pool = child
-            .into_dyn()
-            .try_spawn(test_helper::test_loop!())
-            .unwrap();
-        assert_eq!(pool.inbox_count(), 2);
+        let mut child = child.into_dyn();
+        child.try_spawn(test_helper::test_loop!()).unwrap();
+        assert_eq!(child.inbox_count(), 2);
     }
 
     #[tokio::test]
     async fn child_try_spawn_exited() {
-        let (child, mut addr) = spawn(Config::default(), test_loop!()).await;
+        let (child, mut addr) = spawn_one(Config::default(), test_loop!());
         addr.halt_all();
         (&mut addr).await;
 
@@ -647,7 +598,7 @@ mod test {
 
     #[tokio::test]
     async fn child_try_spawn_incorrect_type() {
-        let (child, addr) = spawn(Config::default(), test_loop!()).await;
+        let (child, addr) = spawn_one(Config::default(), test_loop!());
         let res = child.into_dyn().try_spawn(test_loop!(u32));
 
         matches!(res, Err(TrySpawnError::IncorrectType(_)));
@@ -656,14 +607,15 @@ mod test {
 
     #[tokio::test]
     async fn child_spawn_ok() {
-        let (child, _addr) = spawn(Config::default(), test_loop!()).await;
-        let pool = child.into_dyn().try_spawn(test_loop!()).unwrap();
-        assert_eq!(pool.inbox_count(), 2);
+        let (child, _addr) = spawn_one(Config::default(), test_loop!());
+        let mut child = child.into_dyn();
+        child.try_spawn(test_loop!()).unwrap();
+        assert_eq!(child.inbox_count(), 2);
     }
 
     #[tokio::test]
     async fn child_spawn_exited() {
-        let (child, mut addr) = spawn(Config::default(), test_loop!()).await;
+        let (mut child, mut addr) = spawn_one(Config::default(), test_loop!());
         addr.halt_all();
         (&mut addr).await;
 

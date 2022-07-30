@@ -33,45 +33,12 @@ pub struct Channel<M> {
     /// Subscribe when waiting for Actor to exit.
     exit_event: Event,
 
-    pub(crate) spawn_waker: Mutex<Option<Waker>>,
-
-    spawn_count: AtomicUsize,
-
     /// The amount of processes that should still be halted.
     /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
 }
 
 impl<M> Channel<M> {
-    /// Set the spawn-count
-    ///
-    /// # Panics
-    /// * `prev-spawn-count != 0`
-    pub(crate) fn set_spawn_count(&self, count: usize) {
-        self.spawn_count.store(count, Ordering::Release)
-    }
-
-    /// Decrement the spawn-count by 1
-    ///
-    /// # Panics
-    /// * `prev-spawn-count == 0`
-    /// * no spawn-waker
-    pub(crate) fn decr_spawn_count(&self) {
-        match self.spawn_count.fetch_sub(1, Ordering::AcqRel) {
-            0 => panic!(),
-            1 => self.spawn_waker.lock().unwrap().take().unwrap().wake(),
-            _ => (),
-        }
-    }
-
-    pub(crate) fn spawn_count(&self) -> usize {
-        self.spawn_count.load(Ordering::Acquire)
-    }
-
-    pub(crate) fn spawn_waker_guard(&self) -> MutexGuard<'_, Option<Waker>> {
-        self.spawn_waker.lock().unwrap()
-    }
-
     /// Create a new channel, given an address count, inbox_count and capacity.
     ///
     /// After this, it must be ensured that the correct amount of inboxes and addresses actually exist.
@@ -88,14 +55,10 @@ impl<M> Channel<M> {
             send_event: Event::new(),
             exit_event: Event::new(),
             halt_count: AtomicI32::new(0),
-            spawn_waker: Mutex::new(None),
-            spawn_count: AtomicUsize::new(0),
         }
     }
 
-    pub(crate) fn spawn(&self) {
-        todo!()
-    }
+    
 
     /// Add an inbox to the channel, incrementing inbox-count by 1. Afterwards,
     /// a new Inbox may be created from this channel.
@@ -103,6 +66,11 @@ impl<M> Channel<M> {
     /// Returns the old inbox-count
     pub(crate) fn add_inbox(&self) -> usize {
         self.inbox_count.fetch_add(1, Ordering::AcqRel)
+    }
+
+    /// Sets the inbox-count
+    pub(crate) fn set_inbox_count(&self, count: usize) {
+        self.inbox_count.store(count, Ordering::Release)
     }
 
     /// Try to add an inbox to the channel, incrementing inbox-count by 1. Afterwards,

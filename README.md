@@ -102,7 +102,7 @@ async fn main() {
                 },
             }
         }
-    }).await;
+    });
 
     address.send(10).await.unwrap();
     address.send(5).await.unwrap();
@@ -159,7 +159,7 @@ async fn main() {
                 }
             }
         },
-    ).await;
+    );
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 

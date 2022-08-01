@@ -60,8 +60,8 @@ An `actor` can be `aborted` through tokio's [abort](https://docs.rs/tokio/latest
 
 ## Exiting
 An `exit` can refer to two seperate events which, with good practise, always occur at the same time:
-* A `process` can exit by dropping it's `Inbox`. Once all `Inboxes` of a `Channel` have been dropped, the `actor` has `exited`. This type of exit can be retrieved from the `Channel` at any time.
-* A `task` can exit, which means the `task` is no longer alive. This can only be queried only once, by awaiting the `Child(Pool)`. 
+* A `process` can exit by dropping it's `Inbox`. Once all `Inboxes` of a `Channel` have been dropped, the `actor` has `exited`. This type of exit can be retrieved from the `Channel` at any time using `has_exited`.
+* A `task` can exit, which means the `task` is no longer alive. This can only be queried only once, by awaiting the `Child(Pool)` or by calling `is_finished`. 
 
 Therefore, it is recommended to drop an `Inbox` only when the `task` is also exiting, this way an exit always refers to the same event.
 

@@ -109,7 +109,7 @@ where
     I: Send + 'static,
 {
     let iter = iter.into_iter();
-    let channel = Arc::new(Channel::<M>::new(1, iter.size_hint().0, config.capacity));
+    let channel = Arc::new(Channel::<M>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
 
     let handles = iter

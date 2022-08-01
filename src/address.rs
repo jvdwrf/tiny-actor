@@ -7,9 +7,6 @@ use std::{
     task::{Context, Poll},
 };
 
-/// An `Address` is the cloneable sender-part of a `Channel`, and is primarily used to send messages
-/// to the `Actor`. When all `Address`es are dropped, the `Channel` is closed automatically. `Address`es
-/// can be awaited, which will return when the `Actor` has exited.
 pub struct Address<M> {
     channel: Arc<Channel<M>>,
     exit_listener: Option<EventListener>,

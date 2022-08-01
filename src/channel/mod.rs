@@ -3,7 +3,7 @@ use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-pub mod any_channel;
+mod any_channel;
 mod receiving;
 mod sending;
 pub use {any_channel::*, receiving::*, sending::*};

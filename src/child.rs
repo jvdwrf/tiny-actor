@@ -3,11 +3,6 @@ use futures::{task::Spawn, Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
-/// A `Child` is a handle to an `Actor` with a single `Process`. A `Child` can be awaited to return
-/// the exit-value of the `tokio::task`. A `Child` is non-cloneable, and therefore unique to the
-/// `Channel`. When the `Child` is dropped, the `Actor` will be `halt`ed and `abort`ed. This can
-/// be prevented by detaching the `Child`. More processes can be spawned later, which transforms
-/// the `Child` into a `ChildPool`.
 pub struct Child<E: Send + 'static, C: AnyChannel + ?Sized = dyn AnyChannel> {
     handle: Option<JoinHandle<E>>,
     channel: Arc<C>,
@@ -41,13 +36,13 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
 
     /// Get the underlying [JoinHandle].
     ///
-    /// This will not run the drop-implementation, and therefore the `Actor` will not
+    /// This will not run the drop-implementation, and therefore the actor will not
     /// be halted/aborted.
     pub fn into_tokio_joinhandle(self) -> JoinHandle<E> {
         self.into_parts().1
     }
 
-    /// Abort the `Actor`.
+    /// Abort the actor.
     ///
     /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
@@ -58,29 +53,9 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
         !was_aborted
     }
 
-    /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
-    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
-        self.link.attach(duration)
-    }
-
-    /// Detach the `Actor`. Returns the old abort-timeout, if it was attached before this.
-    pub fn detach(&mut self) -> Option<Duration> {
-        self.link.detach()
-    }
-
-    /// Get a reference to the current [Link] of the `Actor`.
-    pub fn link(&self) -> &Link {
-        &self.link
-    }
-
-    /// Whether the `tokio::task` has finished.
+    /// Whether the task has finished.
     pub fn is_finished(&self) -> bool {
         self.handle.as_ref().unwrap().is_finished()
-    }
-
-    /// Whether the `Actor` has been aborted.
-    pub fn is_aborted(&self) -> bool {
-        self.is_aborted
     }
 
     /// Convert the [Child] into a [ChildPool].
@@ -94,7 +69,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
         }
     }
 
-    /// Downcast the [Child<E>] to a [Child<E, Channel<M>>].
+    /// Downcast the `Child<E>` to a `Child<E, Channel<M>>`.
     pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self> {
         let (channel, handle, link, is_aborted) = self.into_parts();
         match channel.clone().into_any().downcast::<Channel<M>>() {
@@ -113,6 +88,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
         }
     }
 
+    gen::child_methods!();
     gen::any_channel_methods!();
 }
 
@@ -169,9 +145,6 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Future for Child<E, C> {
 //  ChildPool
 //------------------------------------------------------------------------------------------------
 
-/// A [ChildPool] is similar to a [Child], except that the `Actor` can have more
-/// than one `Process`. A [ChildPool] can be streamed to get the exit-values of
-/// all spawned `tokio::task`s.
 pub struct ChildPool<E: Send + 'static, C: AnyChannel + ?Sized = dyn AnyChannel> {
     channel: Arc<C>,
     handles: Option<Vec<JoinHandle<E>>>,
@@ -192,7 +165,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    pub(crate) fn into_parts(self) -> (Arc<C>, Vec<JoinHandle<E>>, Link, bool) {
+    fn into_parts(self) -> (Arc<C>, Vec<JoinHandle<E>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handles);
@@ -204,7 +177,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     }
 
     /// Get the underlying [JoinHandles](JoinHandle). The order does not necessarily reflect
-    /// which was spawned earlier
+    /// the order in which processes were spawned.
     ///
     /// This will not run the drop-implementation, and therefore the `Actor` will not
     /// be halted/aborted.
@@ -212,7 +185,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         self.into_parts().1
     }
 
-    /// Abort the `Actor`.
+    /// Abort the actor.
     ///
     /// Returns `true` if this is the first abort.
     pub fn abort(&mut self) -> bool {
@@ -225,23 +198,8 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         !was_aborted
     }
 
-    /// Attach the `Actor`. Returns the old abort-timeout, if it was attached before this.
-    pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
-        self.link.attach(duration)
-    }
-
-    /// Detach the `Actor`. Returns the old abort-timeout, if it was attached before this.
-    pub fn detach(&mut self) -> Option<Duration> {
-        self.link.detach()
-    }
-
-    /// Get a reference to the current [Link] of the `Actor`.
-    pub fn link(&self) -> &Link {
-        &self.link
-    }
-
-    /// Whether all `tokio::tasks` have exited.
-    pub fn exited(&self) -> bool {
+    /// Whether all tasks have exited.
+    pub fn is_finished(&self) -> bool {
         self.handles
             .as_ref()
             .unwrap()
@@ -249,7 +207,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
             .all(|handle| handle.is_finished())
     }
 
-    /// The amount of `tokio::task`s that are still alive
+    /// The amount of tasks that are alive
     pub fn task_count(&self) -> usize {
         self.handles
             .as_ref()
@@ -260,18 +218,13 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
             .len()
     }
 
-    /// The amount of `Child`ren in this `ChildPool`, this includes both alive and
-    /// dead `Processes`.
+    /// The amount of `Children` in this `ChildPool`, this includes both alive and
+    /// dead processes.
     pub fn child_count(&self) -> usize {
         self.handles.as_ref().unwrap().len()
     }
 
-    /// Whether the `Actor` is aborted.
-    pub fn is_aborted(&self) -> bool {
-        self.is_aborted
-    }
-
-    /// Convert the [ChildPool] into a [Child], if there is exactly one child in the
+    /// Convert the [ChildPool] into a [Child]. Succeeds if there is exactly one child in the
     /// pool.
     pub fn try_into_child(self) -> Result<Child<E, C>, Self> {
         if self.handles.as_ref().unwrap().len() == 1 {
@@ -287,11 +240,11 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         }
     }
 
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    /// Attempt to spawn an additional process onto the [Channel].
     ///
     /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
+    /// * The [Inbox]-type does not match that of the [Channel].
+    /// * The [Channel] has already exited.
     pub fn try_spawn<M, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -315,7 +268,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         }
     }
 
-    /// Downcast the [ChildPool<E>] to a [ChildPool<E, Channel<M>>]
+    /// Downcast the `ChildPool<E>` to a `ChildPool<E, Channel<M>>`
     pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Channel<M>>, Self> {
         let (channel, handles, link, is_aborted) = self.into_parts();
         match channel.clone().into_any().downcast::<Channel<M>>() {
@@ -335,10 +288,11 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
     }
 
     gen::any_channel_methods!();
+    gen::child_methods!();
 }
 
 impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
-    /// Convert the [ChildPool<E, Channel<M>] into a [ChildPool<E>].
+    /// Convert the `ChildPool<E, Channel<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
         ChildPool {
@@ -349,11 +303,11 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
         }
     }
 
-    /// Attempt to spawn an additional `Process` on to this `Channel`.
+    /// Attempt to spawn an additional process on to this [Channel].
     ///
     /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the `Channel`.
-    /// * The `Channel` has already exited.
+    /// * The [Inbox]-type does not match that of the [Channel].
+    /// * The [Channel] has already exited.
     pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), SpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -397,7 +351,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Stream for ChildPool<E, C> {
 impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for ChildPool<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
-            if !self.is_aborted && !self.exited() {
+            if !self.is_aborted && !self.is_finished() {
                 if abort_timer.is_zero() {
                     self.abort();
                 } else {
@@ -419,7 +373,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for ChildPool<E, C> {
 //  Errors
 //------------------------------------------------------------------------------------------------
 
-/// An error returned from an exiting tokio-task.
+/// An error returned from an exiting task.
 ///
 /// Can be either because it has panicked, or because it was aborted.
 #[derive(Debug, thiserror::Error)]
@@ -475,7 +429,7 @@ impl<T> Debug for TrySpawnError<T> {
     }
 }
 
-/// An error returned when trying to spawn more processes onto a [Channel].
+/// An error returned when spawning more processes onto a [Channel].
 ///
 /// This can only happen if the [Channel] has already exited.
 #[derive(Clone, thiserror::Error)]

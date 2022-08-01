@@ -3,10 +3,6 @@ use event_listener as el;
 use futures::Stream;
 use std::{fmt::Debug, sync::Arc};
 
-/// An `Inbox` is a receiver-part of the `Channel`, and is primarily used to take messages out
-/// of the `Channel`. `Inbox`es can only be created by spawning new `Process`es and should stay
-/// coupled to the `tokio::task` they were spawned with. Therefore, an `Inbox` should only be
-/// dropped when the `tokio::task` is exiting.
 pub struct Inbox<M> {
     // The underlying channel
     channel: Arc<Channel<M>>,

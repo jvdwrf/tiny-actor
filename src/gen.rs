@@ -87,3 +87,28 @@ macro_rules! send_methods {
     };
 }
 pub(crate) use send_methods;
+
+macro_rules! child_methods {
+    () => {
+        /// Attach the actor. Returns the old abort-timeout, if it was attached before this.
+        pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
+            self.link.attach(duration)
+        }
+
+        /// Detach the actor. Returns the old abort-timeout, if it was attached before this.
+        pub fn detach(&mut self) -> Option<Duration> {
+            self.link.detach()
+        }
+
+        /// Whether the actor is aborted.
+        pub fn is_aborted(&self) -> bool {
+            self.is_aborted
+        }
+
+        /// Get a reference to the current [Link] of the actor.
+        pub fn link(&self) -> &Link {
+            &self.link
+        }
+    };
+}
+pub(crate) use child_methods;

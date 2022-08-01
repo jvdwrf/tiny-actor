@@ -1,5 +1,5 @@
 use crate::*;
-use futures::{task::Spawn, Future, FutureExt, Stream};
+use futures::{Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 

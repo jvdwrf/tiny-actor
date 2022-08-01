@@ -1,6 +1,6 @@
 use crate::*;
 use futures::Future;
-use std::{sync::Arc, task::Poll};
+use std::{sync::Arc};
 
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].

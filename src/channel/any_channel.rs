@@ -1,4 +1,4 @@
-use std::{sync::Arc, any::Any};
+use std::{sync::Arc, any::Any, fmt::Debug};
 use event_listener::EventListener;
 
 use crate::*;
@@ -20,7 +20,7 @@ pub trait DynChannel {
     fn get_exit_listener(&self) -> EventListener;
 }
 
-pub trait AnyChannel: DynChannel + Send + Sync + 'static {
+pub trait AnyChannel: DynChannel + Debug + Send + Sync + 'static {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 

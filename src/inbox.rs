@@ -3,6 +3,7 @@ use event_listener as el;
 use futures::Stream;
 use std::{fmt::Debug, sync::Arc};
 
+#[derive(Debug)]
 pub struct Inbox<M> {
     // The underlying channel
     channel: Arc<Channel<M>>,
@@ -68,14 +69,5 @@ impl<M> Stream for Inbox<M> {
 impl<M> Drop for Inbox<M> {
     fn drop(&mut self) {
         self.channel.remove_inbox();
-    }
-}
-
-impl<M> Debug for Inbox<M> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Inbox")
-            .field("listener", &self.listener)
-            .field("signaled_halt", &self.signaled_halt)
-            .finish()
     }
 }

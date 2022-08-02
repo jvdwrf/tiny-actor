@@ -2,17 +2,25 @@ use crate::*;
 use event_listener::EventListener;
 use futures::{Future, FutureExt};
 use std::{
+    fmt::Debug,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
-pub struct Address<C: DynChannel + ?Sized = dyn AnyChannel> {
+#[derive(Debug)]
+pub struct Address<C = dyn AnyChannel>
+where
+    C: DynChannel + ?Sized,
+{
     channel: Arc<C>,
     exit_listener: Option<EventListener>,
 }
 
-impl<C: DynChannel + ?Sized> Address<C> {
+impl<C> Address<C>
+where
+    C: DynChannel + ?Sized,
+{
     /// Does not increment the address-count.
     pub(crate) fn from_channel(channel: Arc<C>) -> Self {
         Self {
@@ -34,7 +42,10 @@ impl<C: DynChannel + ?Sized> Address<C> {
     gen::any_channel_methods!();
 }
 
-impl<M: Send + 'static> Address<Channel<M>> {
+impl<M> Address<Channel<M>>
+where
+    M: Send + 'static,
+{
     gen::send_methods!();
 }
 

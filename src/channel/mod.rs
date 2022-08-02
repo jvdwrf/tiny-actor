@@ -1,7 +1,10 @@
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::{
+    fmt::Debug,
+    sync::atomic::{AtomicI32, AtomicUsize, Ordering},
+};
 
 mod any_channel;
 mod receiving;
@@ -282,6 +285,18 @@ impl<M> Channel<M> {
     /// Get a new exit-event listener
     pub(crate) fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
+    }
+}
+
+impl<M> Debug for Channel<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Channel")
+            .field("queue", &self.queue)
+            .field("capacity", &self.capacity)
+            .field("address_count", &self.address_count)
+            .field("inbox_count", &self.inbox_count)
+            .field("halt_count", &self.halt_count)
+            .finish()
     }
 }
 

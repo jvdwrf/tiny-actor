@@ -3,6 +3,7 @@ use futures::{Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
+#[derive(Debug)]
 pub struct Child<E, C = dyn AnyChannel>
 where
     E: Send + 'static,
@@ -163,6 +164,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
 //  ChildPool
 //------------------------------------------------------------------------------------------------
 
+#[derive(Debug)]
 pub struct ChildPool<E, C = dyn AnyChannel>
 where
     E: Send + 'static,

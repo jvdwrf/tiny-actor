@@ -1,4 +1,6 @@
 use std::{sync::Arc, any::Any};
+use event_listener::EventListener;
+
 use crate::*;
 
 /// A [Channel]-trait, without information about it's message type. Therefore, it's impossible
@@ -14,6 +16,9 @@ pub trait AnyChannel {
     fn is_closed(&self) -> bool;
     fn capacity(&self) -> &Capacity;
     fn has_exited(&self) -> bool;
+    fn add_address(&self) -> usize;
+    fn remove_address(&self);
+    fn get_exit_listener(&self) -> EventListener;
 }
 
 impl<M: Send + 'static> AnyChannel for Channel<M> {
@@ -25,6 +30,9 @@ impl<M: Send + 'static> AnyChannel for Channel<M> {
     }
     fn halt_some(&self, n: u32) {
         self.halt_some(n)
+    }
+    fn halt(&self) {
+        self.halt_some(u32::MAX)
     }
     fn inbox_count(&self) -> usize {
         self.inbox_count()
@@ -44,7 +52,13 @@ impl<M: Send + 'static> AnyChannel for Channel<M> {
     fn has_exited(&self) -> bool {
         self.has_exited()
     }
-    fn halt(&self) {
-        self.halt_some(u32::MAX)
+    fn add_address(&self) -> usize {
+        self.add_address()
+    }
+    fn remove_address(&self) {
+        self.remove_address()
+    }
+    fn get_exit_listener(&self) -> EventListener {
+        self.get_exit_listener()
     }
 }

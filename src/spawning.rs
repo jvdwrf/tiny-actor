@@ -22,7 +22,7 @@ use std::{sync::Arc};
 ///     });
 ///# }
 /// ```
-pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> (Child<E, Channel<M>>, Address<M>)
+pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> (Child<E, Channel<M>>, Address<Channel<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
@@ -56,7 +56,7 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_one<M, E, Fun, Fut>(config: Config, fun: Fun) -> (ChildPool<E, Channel<M>>, Address<M>)
+pub fn spawn_one<M, E, Fun, Fut>(config: Config, fun: Fun) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
@@ -100,7 +100,7 @@ pub fn spawn_many<M, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Channel<M>>, Address<M>)
+) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
 where
     Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
     Fut: Future<Output = E> + Send + 'static,

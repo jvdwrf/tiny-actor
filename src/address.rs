@@ -4,38 +4,42 @@ use futures::{Future, FutureExt};
 use std::{
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll}, fmt::Debug,
 };
 
-pub struct Address<M> {
-    channel: Arc<Channel<M>>,
+pub struct Address<C: AnyChannel + ?Sized> {
+    channel: Arc<C>,
     exit_listener: Option<EventListener>,
 }
 
-impl<M> Address<M> {
+
+impl<C: AnyChannel + ?Sized> Address<C> {
     /// Does not increment the address-count.
-    pub(crate) fn from_channel(channel: Arc<Channel<M>>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<C>) -> Self {
         Self {
             channel,
             exit_listener: None,
         }
     }
 
-    pub(crate) fn channel(&self) -> &Arc<Channel<M>> {
+    pub(crate) fn channel(&self) -> &Arc<C> {
         &self.channel
     }
 
     /// Get a new [Address] to the [Channel].
-    pub fn get_address(&self) -> Address<M> {
+    pub fn get_address(&self) -> Address<C> {
         self.channel.add_address();
         Address::from_channel(self.channel.clone())
     }
 
-    gen::send_methods!();
     gen::any_channel_methods!();
 }
 
-impl<M> Future for Address<M> {
+impl<M: Send + 'static> Address<Channel<M>> {
+    gen::send_methods!();
+}
+
+impl<C: AnyChannel + ?Sized> Future for Address<C> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -57,9 +61,9 @@ impl<M> Future for Address<M> {
     }
 }
 
-impl<M> Unpin for Address<M> {}
+impl<C: AnyChannel + ?Sized> Unpin for Address<C> {}
 
-impl<M> Clone for Address<M> {
+impl<C: AnyChannel + ?Sized> Clone for Address<C> {
     fn clone(&self) -> Self {
         self.channel.add_address();
         Self {
@@ -69,7 +73,7 @@ impl<M> Clone for Address<M> {
     }
 }
 
-impl<M> Drop for Address<M> {
+impl<C: AnyChannel + ?Sized> Drop for Address<C> {
     fn drop(&mut self) {
         self.channel.remove_address()
     }

@@ -17,4 +17,5 @@ tokio = { version = "1.18", features = ["full"] }
 concurrent-queue = "1.2.2"
 thiserror = "1.0"
 once_cell = "1.13"
+tiny-actor-codegen = { path = "../tiny-actor-codegen" }
 

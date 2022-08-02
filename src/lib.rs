@@ -5,11 +5,15 @@ mod config;
 mod gen;
 mod spawning;
 mod parts;
+mod messaging;
+mod channel;
 
 pub use actor::*;
 pub use config::*;
 pub use spawning::*;
 pub use parts::*;
+pub use messaging::*;
+pub use channel::*;
 
 #[cfg(test)]
 pub(crate) mod test_helper {

@@ -3,14 +3,22 @@ use futures::{Future, FutureExt, Stream};
 use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
 use tokio::task::JoinHandle;
 
-pub struct Child<E: Send + 'static, C: AnyChannel + ?Sized = dyn AnyChannel> {
+pub struct Child<E, C = dyn AnyChannel>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
     handle: Option<JoinHandle<E>>,
     channel: Arc<C>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
+impl<E, C> Child<E, C>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
     pub(crate) fn new(channel: Arc<C>, join_handle: JoinHandle<E>, link: Link) -> Self {
         Self {
             handle: Some(join_handle),
@@ -69,6 +77,15 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
         }
     }
 
+    gen::child_methods!();
+    gen::any_channel_methods!();
+}
+
+impl<E, C> Child<E, C>
+where
+    E: Send + 'static,
+    C: AnyChannel + ?Sized,
+{
     /// Downcast the `Child<E>` to a `Child<E, Channel<M>>`.
     pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self> {
         let (channel, handle, link, is_aborted) = self.into_parts();
@@ -87,12 +104,13 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Child<E, C> {
             }),
         }
     }
-
-    gen::child_methods!();
-    gen::any_channel_methods!();
 }
 
-impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
+impl<E, M> Child<E, Channel<M>>
+where
+    E: Send + 'static,
+    M: Send + 'static,
+{
     /// Convert the `Child<T, Channel<M>>` into a `Child<T>`
     pub fn into_dyn(self) -> Child<E> {
         let parts = self.into_parts();
@@ -105,7 +123,7 @@ impl<E: Send + 'static, M: Send + 'static> Child<E, Channel<M>> {
     }
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for Child<E, C> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for Child<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -124,9 +142,9 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for Child<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Unpin for Child<E, C> {}
+impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for Child<E, C> {}
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Future for Child<E, C> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
     type Output = Result<E, ExitError>;
 
     fn poll(
@@ -145,14 +163,22 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Future for Child<E, C> {
 //  ChildPool
 //------------------------------------------------------------------------------------------------
 
-pub struct ChildPool<E: Send + 'static, C: AnyChannel + ?Sized = dyn AnyChannel> {
+pub struct ChildPool<E, C = dyn AnyChannel>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
     channel: Arc<C>,
     handles: Option<Vec<JoinHandle<E>>>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
+impl<E, C> ChildPool<E, C>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
     pub(crate) fn new(channel: Arc<C>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
         Self {
             channel,
@@ -240,6 +266,15 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
         }
     }
 
+    gen::any_channel_methods!();
+    gen::child_methods!();
+}
+
+impl<E, C> ChildPool<E, C>
+where
+    E: Send + 'static,
+    C: AnyChannel + ?Sized,
+{
     /// Attempt to spawn an additional process onto the [Channel].
     ///
     /// This method can fail for 2 reasons:
@@ -286,9 +321,6 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> ChildPool<E, C> {
             }),
         }
     }
-
-    gen::any_channel_methods!();
-    gen::child_methods!();
 }
 
 impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
@@ -326,7 +358,7 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
     }
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Stream for ChildPool<E, C> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Stream for ChildPool<E, C> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(
@@ -348,7 +380,7 @@ impl<E: Send + 'static, C: AnyChannel + ?Sized> Stream for ChildPool<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: AnyChannel + ?Sized> Drop for ChildPool<E, C> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {

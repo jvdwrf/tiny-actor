@@ -4,16 +4,15 @@ use futures::{Future, FutureExt};
 use std::{
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll}, fmt::Debug,
+    task::{Context, Poll},
 };
 
-pub struct Address<C: AnyChannel + ?Sized> {
+pub struct Address<C: DynChannel + ?Sized = dyn AnyChannel> {
     channel: Arc<C>,
     exit_listener: Option<EventListener>,
 }
 
-
-impl<C: AnyChannel + ?Sized> Address<C> {
+impl<C: DynChannel + ?Sized> Address<C> {
     /// Does not increment the address-count.
     pub(crate) fn from_channel(channel: Arc<C>) -> Self {
         Self {
@@ -39,7 +38,7 @@ impl<M: Send + 'static> Address<Channel<M>> {
     gen::send_methods!();
 }
 
-impl<C: AnyChannel + ?Sized> Future for Address<C> {
+impl<C: DynChannel + ?Sized> Future for Address<C> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -61,9 +60,9 @@ impl<C: AnyChannel + ?Sized> Future for Address<C> {
     }
 }
 
-impl<C: AnyChannel + ?Sized> Unpin for Address<C> {}
+impl<C: DynChannel + ?Sized> Unpin for Address<C> {}
 
-impl<C: AnyChannel + ?Sized> Clone for Address<C> {
+impl<C: DynChannel + ?Sized> Clone for Address<C> {
     fn clone(&self) -> Self {
         self.channel.add_address();
         Self {
@@ -73,7 +72,7 @@ impl<C: AnyChannel + ?Sized> Clone for Address<C> {
     }
 }
 
-impl<C: AnyChannel + ?Sized> Drop for Address<C> {
+impl<C: DynChannel + ?Sized> Drop for Address<C> {
     fn drop(&mut self) {
         self.channel.remove_address()
     }

@@ -5,8 +5,7 @@ use crate::*;
 
 /// A [Channel]-trait, without information about it's message type. Therefore, it's impossible
 /// to send or receive messages through this.
-pub trait AnyChannel {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+pub trait DynChannel {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
     fn halt(&self);
@@ -21,10 +20,17 @@ pub trait AnyChannel {
     fn get_exit_listener(&self) -> EventListener;
 }
 
+pub trait AnyChannel: DynChannel + Send + Sync + 'static {
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+}
+
 impl<M: Send + 'static> AnyChannel for Channel<M> {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
+}
+
+impl<M> DynChannel for Channel<M> {
     fn close(&self) -> bool {
         self.close()
     }

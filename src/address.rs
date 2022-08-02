@@ -10,31 +10,31 @@ use std::{
 };
 
 #[derive(Debug)]
-pub struct Address<C = dyn AnyActor>
+pub struct Address<A = dyn AnyActor>
 where
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
-    channel: Arc<C>,
+    channel: Arc<A>,
     exit_listener: Option<EventListener>,
 }
 
-impl<C> Address<C>
+impl<A> Address<A>
 where
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
     /// Does not increment the address-count.
-    pub(crate) fn from_channel(channel: Arc<C>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<A>) -> Self {
         Self {
             channel,
             exit_listener: None,
         }
     }
 
-    pub(crate) fn channel(&self) -> &Arc<C> {
+    pub(crate) fn channel(&self) -> &Arc<A> {
         &self.channel
     }
 
-    fn into_parts(self) -> (Arc<C>, Option<EventListener>) {
+    fn into_parts(self) -> (Arc<A>, Option<EventListener>) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let channel = std::ptr::read(&no_drop.channel);
@@ -44,7 +44,7 @@ where
     }
 
     /// Get a new [Address] to the [Actor].
-    pub fn get_address(&self) -> Address<C> {
+    pub fn get_address(&self) -> Address<A> {
         self.channel.add_address();
         Address::from_channel(self.channel.clone())
     }
@@ -85,7 +85,7 @@ impl Address {
     }
 }
 
-impl<C: DynActor + ?Sized> Future for Address<C> {
+impl<A: DynActor + ?Sized> Future for Address<A> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -107,9 +107,9 @@ impl<C: DynActor + ?Sized> Future for Address<C> {
     }
 }
 
-impl<C: DynActor + ?Sized> Unpin for Address<C> {}
+impl<A: DynActor + ?Sized> Unpin for Address<A> {}
 
-impl<C: DynActor + ?Sized> Clone for Address<C> {
+impl<A: DynActor + ?Sized> Clone for Address<A> {
     fn clone(&self) -> Self {
         self.channel.add_address();
         Self {
@@ -119,7 +119,7 @@ impl<C: DynActor + ?Sized> Clone for Address<C> {
     }
 }
 
-impl<C: DynActor + ?Sized> Drop for Address<C> {
+impl<A: DynActor + ?Sized> Drop for Address<A> {
     fn drop(&mut self) {
         self.channel.remove_address()
     }

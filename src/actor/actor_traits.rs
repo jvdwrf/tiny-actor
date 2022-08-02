@@ -3,7 +3,7 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use crate::*;
 
-/// A [Actor]-trait, without information about it's message type. Therefore, it's impossible
+/// An [Actor]-trait, without information about it's message type. Therefore, it's impossible
 /// to send or receive messages through this.
 pub trait DynActor {
     fn close(&self) -> bool;
@@ -23,12 +23,6 @@ pub trait DynActor {
 
 pub trait AnyActor: DynActor + Debug + Send + Sync + 'static {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
-}
-
-impl<M: Send + 'static> AnyActor for Actor<M> {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
-        self
-    }
 }
 
 impl<M> DynActor for Actor<M> {
@@ -70,5 +64,11 @@ impl<M> DynActor for Actor<M> {
     }
     fn actor_id(&self) -> u64 {
         self.actor_id()
+    }
+}
+
+impl<M: Send + 'static> AnyActor for Actor<M> {
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
+        self
     }
 }

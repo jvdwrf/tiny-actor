@@ -7,10 +7,10 @@ use std::{
     sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
 };
 
-mod any_channel;
+mod actor_traits;
 mod receiving;
 mod sending;
-pub use {any_channel::*, receiving::*, sending::*};
+pub use {actor_traits::*, receiving::*, sending::*};
 
 static ACTOR_ID_COUNTER: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 fn next_actor_id() -> u64 {

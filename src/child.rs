@@ -4,23 +4,23 @@ use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
-pub struct Child<E, C = dyn AnyActor>
+pub struct Child<E, A = dyn AnyActor>
 where
     E: Send + 'static,
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
     handle: Option<JoinHandle<E>>,
-    channel: Arc<C>,
+    channel: Arc<A>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<E, C> Child<E, C>
+impl<E, A> Child<E, A>
 where
     E: Send + 'static,
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
-    pub(crate) fn new(channel: Arc<C>, join_handle: JoinHandle<E>, link: Link) -> Self {
+    pub(crate) fn new(channel: Arc<A>, join_handle: JoinHandle<E>, link: Link) -> Self {
         Self {
             handle: Some(join_handle),
             link,
@@ -32,7 +32,7 @@ where
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    fn into_parts(self) -> (Arc<C>, JoinHandle<E>, Link, bool) {
+    fn into_parts(self) -> (Arc<A>, JoinHandle<E>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handle);
@@ -68,7 +68,7 @@ where
     }
 
     /// Convert the [Child] into a [ChildPool].
-    pub fn into_pool(self) -> ChildPool<E, C> {
+    pub fn into_pool(self) -> ChildPool<E, A> {
         let (channel, handle, link, is_aborted) = self.into_parts();
         ChildPool {
             channel,
@@ -82,10 +82,10 @@ where
     gen::any_channel_methods!();
 }
 
-impl<E, C> Child<E, C>
+impl<E, A> Child<E, A>
 where
     E: Send + 'static,
-    C: AnyActor + ?Sized,
+    A: AnyActor + ?Sized,
 {
     /// Downcast the `Child<E>` to a `Child<E, Actor<M>>`.
     pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Actor<M>>, Self> {
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<E: Send + 'static, C: DynActor + ?Sized> Drop for Child<E, C> {
+impl<E: Send + 'static, A: DynActor + ?Sized> Drop for Child<E, A> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -143,9 +143,9 @@ impl<E: Send + 'static, C: DynActor + ?Sized> Drop for Child<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: DynActor + ?Sized> Unpin for Child<E, C> {}
+impl<E: Send + 'static, A: DynActor + ?Sized> Unpin for Child<E, A> {}
 
-impl<E: Send + 'static, C: DynActor + ?Sized> Future for Child<E, C> {
+impl<E: Send + 'static, A: DynActor + ?Sized> Future for Child<E, A> {
     type Output = Result<E, ExitError>;
 
     fn poll(
@@ -165,23 +165,23 @@ impl<E: Send + 'static, C: DynActor + ?Sized> Future for Child<E, C> {
 //------------------------------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct ChildPool<E, C = dyn AnyActor>
+pub struct ChildPool<E, A = dyn AnyActor>
 where
     E: Send + 'static,
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
-    channel: Arc<C>,
+    channel: Arc<A>,
     handles: Option<Vec<JoinHandle<E>>>,
     link: Link,
     is_aborted: bool,
 }
 
-impl<E, C> ChildPool<E, C>
+impl<E, A> ChildPool<E, A>
 where
     E: Send + 'static,
-    C: DynActor + ?Sized,
+    A: DynActor + ?Sized,
 {
-    pub(crate) fn new(channel: Arc<C>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
+    pub(crate) fn new(channel: Arc<A>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
         Self {
             channel,
             handles: Some(handles),
@@ -193,7 +193,7 @@ where
     /// Split the child into it's parts.
     ///
     /// This will not run the destructor, and therefore the child will not be notified.
-    fn into_parts(self) -> (Arc<C>, Vec<JoinHandle<E>>, Link, bool) {
+    fn into_parts(self) -> (Arc<A>, Vec<JoinHandle<E>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
             let mut handle = std::ptr::read(&no_drop.handles);
@@ -254,7 +254,7 @@ where
 
     /// Convert the [ChildPool] into a [Child]. Succeeds if there is exactly one child in the
     /// pool.
-    pub fn try_into_child(self) -> Result<Child<E, C>, Self> {
+    pub fn try_into_child(self) -> Result<Child<E, A>, Self> {
         if self.handles.as_ref().unwrap().len() == 1 {
             let (channel, mut handles, link, is_aborted) = self.into_parts();
             Ok(Child {
@@ -272,10 +272,10 @@ where
     gen::child_methods!();
 }
 
-impl<E, C> ChildPool<E, C>
+impl<E, A> ChildPool<E, A>
 where
     E: Send + 'static,
-    C: AnyActor + ?Sized,
+    A: AnyActor + ?Sized,
 {
     /// Attempt to spawn an additional process onto the [Actor].
     ///
@@ -325,7 +325,7 @@ where
     }
 }
 
-impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Actor<M>> {
+impl<E: Send + 'static, A: Send + 'static> ChildPool<E, Actor<A>> {
     /// Convert the `ChildPool<E, Actor<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
@@ -344,7 +344,7 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Actor<M>> {
     /// * The [Actor] has already exited.
     pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), SpawnError<Fun>>
     where
-        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+        Fun: FnOnce(Inbox<A>) -> Fut + Send + 'static,
         Fut: Future<Output = E> + Send + 'static,
         E: Send + 'static,
     {
@@ -360,7 +360,7 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Actor<M>> {
     }
 }
 
-impl<E: Send + 'static, C: DynActor + ?Sized> Stream for ChildPool<E, C> {
+impl<E: Send + 'static, A: DynActor + ?Sized> Stream for ChildPool<E, A> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(
@@ -382,7 +382,7 @@ impl<E: Send + 'static, C: DynActor + ?Sized> Stream for ChildPool<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: DynActor + ?Sized> Drop for ChildPool<E, C> {
+impl<E: Send + 'static, A: DynActor + ?Sized> Drop for ChildPool<E, A> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {

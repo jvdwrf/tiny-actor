@@ -44,6 +44,11 @@ macro_rules! any_channel_methods {
         pub fn has_exited(&self) -> bool {
             self.channel.has_exited()
         }
+
+        /// Get the actor_id of the [Channel].
+        pub fn actor_id(&self) -> u64 {
+            self.channel.actor_id()
+        }
     };
 }
 pub(crate) use any_channel_methods;

@@ -18,6 +18,7 @@ pub trait DynChannel {
     fn add_address(&self) -> usize;
     fn remove_address(&self);
     fn get_exit_listener(&self) -> EventListener;
+    fn actor_id(&self) -> u64;
 }
 
 pub trait AnyChannel: DynChannel + Debug + Send + Sync + 'static {
@@ -66,5 +67,8 @@ impl<M> DynChannel for Channel<M> {
     }
     fn get_exit_listener(&self) -> EventListener {
         self.get_exit_listener()
+    }
+    fn actor_id(&self) -> u64 {
+        self.actor_id()
     }
 }

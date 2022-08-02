@@ -1,15 +1,21 @@
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
+use once_cell::sync::Lazy;
 use std::{
     fmt::Debug,
-    sync::atomic::{AtomicI32, AtomicUsize, Ordering},
+    sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
 };
 
 mod any_channel;
 mod receiving;
 mod sending;
 pub use {any_channel::*, receiving::*, sending::*};
+
+static ACTOR_ID_COUNTER: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
+fn next_actor_id() -> u64 {
+    ACTOR_ID_COUNTER.fetch_add(1, Ordering::AcqRel)
+}
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 /// This is wrapped in an Arc to allow sharing between them.
@@ -34,6 +40,8 @@ pub struct Channel<M> {
     /// The amount of processes that should still be halted.
     /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
+
+    actor_id: u64,
 }
 
 impl<M> Channel<M> {
@@ -53,6 +61,7 @@ impl<M> Channel<M> {
             send_event: Event::new(),
             exit_event: Event::new(),
             halt_count: AtomicI32::new(0),
+            actor_id: next_actor_id(),
         }
     }
 
@@ -286,6 +295,11 @@ impl<M> Channel<M> {
     pub(crate) fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
     }
+
+    /// Get the actor_id
+    pub(crate) fn actor_id(&self) -> u64 {
+        self.actor_id
+    }
 }
 
 impl<M> Debug for Channel<M> {
@@ -304,11 +318,25 @@ impl<M> Debug for Channel<M> {
 mod test {
     use std::sync::Arc;
 
+    use super::{next_actor_id, Channel};
     use crate::*;
-    use super::Channel;
     use concurrent_queue::PushError;
     use event_listener::EventListener;
     use futures::FutureExt;
+
+    #[test]
+    fn actor_ids() {
+        let id1 = next_actor_id();
+        let id2 = next_actor_id();
+        assert!(id1 < id2);
+    }
+
+    #[test]
+    fn channel_actor_ids() {
+        let id1 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        let id2 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        assert!(id1 < id2);
+    }
 
     #[test]
     fn capacity_types() {
@@ -502,8 +530,8 @@ mod test {
 
 #[cfg(bench)]
 mod bench {
-    use crate::*;
     use super::Channel;
+    use crate::*;
     use concurrent_queue::ConcurrentQueue;
     use futures::future::{pending, ready};
     use std::{

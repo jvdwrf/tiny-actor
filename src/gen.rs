@@ -61,7 +61,11 @@ macro_rules! send_methods {
         /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [send_now](Address::send_now).
-        pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
+        pub fn try_send<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+        where
+            P: Accepts<M>,
+            M: Message,
+        {
             self.channel.try_send(msg)
         }
 
@@ -71,7 +75,11 @@ macro_rules! send_methods {
         /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [try_send](Address::send_now).
-        pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
+        pub fn send_now<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+        where
+            P: Accepts<M>,
+            M: Message,
+        {
             self.channel.send_now(msg)
         }
 
@@ -81,12 +89,20 @@ macro_rules! send_methods {
         /// wait and then send the message.
         /// In the case of a `bounded` [Actor], when it is full, this will wait untill space is
         /// available.
-        pub fn send(&self, msg: M) -> Snd<'_, M> {
+        pub fn send<M>(&self, msg: M) -> Snd<'_, M, P>
+        where
+            P: Accepts<M>,
+            M: Message,
+        {
             self.channel.send(msg)
         }
 
         /// Same as [send](Address::send) but it blocking the OS-thread.
-        pub fn send_blocking(&self, msg: M) -> Result<(), SendError<M>> {
+        pub fn send_blocking<M>(&self, msg: M) -> Result<M::Returns, SendError<P>>
+        where
+            P: Accepts<M>,
+            M: Message,
+        {
             self.channel.send_blocking(msg)
         }
     };

@@ -52,9 +52,9 @@ where
     gen::any_channel_methods!();
 }
 
-impl<M> Address<Actor<M>>
+impl<P> Address<Actor<P>>
 where
-    M: Send + 'static,
+    P: Protocol + Send + 'static,
 {
     /// Convert the `Address<Actor<M>>` into an `Address`.
     pub fn into_dyn(self) -> Address {

@@ -22,17 +22,17 @@ use std::sync::Arc;
 ///     });
 ///# }
 /// ```
-pub fn spawn<M, E, Fun, Fut>(
+pub fn spawn<P, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (Child<E, Actor<M>>, Address<Actor<M>>)
+) -> (Child<E, Actor<P>>, Address<Actor<P>>)
 where
-    Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+    Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
-    M: Send + 'static,
+    P: Protocol + Send + 'static,
 {
-    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -59,17 +59,17 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_one<M, E, Fun, Fut>(
+pub fn spawn_one<P, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Actor<M>>, Address<Actor<M>>)
+) -> (ChildPool<E, Actor<P>>, Address<Actor<P>>)
 where
-    Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+    Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
-    M: Send + 'static,
+    P: Protocol + Send + 'static,
 {
-    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -100,20 +100,20 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_many<M, E, I, Fun, Fut>(
+pub fn spawn_many<P, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Actor<M>>, Address<Actor<M>>)
+) -> (ChildPool<E, Actor<P>>, Address<Actor<P>>)
 where
-    Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
+    Fun: FnOnce(I, Inbox<P>) -> Fut + Send + 'static + Clone,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
-    M: Send + 'static,
+    P: Protocol + Send + 'static,
     I: Send + 'static,
 {
     let iter = iter.into_iter();
-    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
 
     let handles = iter

@@ -8,31 +8,63 @@ use std::{
 };
 use tokio::time::Sleep;
 
-impl<M> Actor<M> {
-    pub(crate) fn send(&self, msg: M) -> Snd<'_, M> {
+impl<P: Protocol> Actor<P> {
+    pub(crate) fn send<M>(&self, msg: M) -> Snd<'_, M, P>
+    where
+        P: Accepts<M>,
+        M: Message,
+    {
         Snd::new(self, msg)
     }
 
-    pub(crate) fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
-        Ok(self.push_msg(msg)?)
+    pub(crate) fn send_now<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+    where
+        P: Accepts<M>,
+        M: Message,
+    {
+        let (tx, rx) = Receiver::channel();
+        let msg = P::from_msg(msg, tx);
+
+        self.push_msg(msg)?;
+        Ok(rx)
     }
 
-    pub(crate) fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
+    pub(crate) fn try_send<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+    where
+        P: Accepts<M>,
+        M: Message,
+    {
+        let (tx, rx) = Receiver::channel();
+        let msg = P::from_msg(msg, tx);
+
         match self.capacity() {
-            Capacity::Bounded(_) => Ok(self.push_msg(msg)?),
+            Capacity::Bounded(_) => {
+                self.push_msg(msg)?;
+                Ok(rx)
+            }
             Capacity::Unbounded(backoff) => match backoff.get_timeout(self.msg_count()) {
                 Some(_) => Err(TrySendError::Full(msg)),
-                None => Ok(self.push_msg(msg)?),
+                None => {
+                    self.push_msg(msg)?;
+                    Ok(rx)
+                }
             },
         }
     }
 
-    pub(crate) fn send_blocking(&self, mut msg: M) -> Result<(), SendError<M>> {
+    pub(crate) fn send_blocking<M>(&self, msg: M) -> Result<M::Returns, SendError<P>>
+    where
+        P: Accepts<M>,
+        M: Message,
+    {
+        let (tx, rx) = Receiver::channel();
+        let mut msg = P::from_msg(msg, tx);
+
         match self.capacity() {
             Capacity::Bounded(_) => loop {
                 msg = match self.push_msg(msg) {
                     Ok(()) => {
-                        return Ok(());
+                        return Ok(rx);
                     }
                     Err(PushError::Closed(msg)) => {
                         return Err(SendError(msg));
@@ -50,16 +82,17 @@ impl<M> Actor<M> {
                 self.push_msg(msg).map_err(|e| match e {
                     PushError::Full(_) => unreachable!("unbounded"),
                     PushError::Closed(msg) => SendError(msg),
-                })
+                })?;
+                Ok(rx)
             }
         }
     }
 }
 
 /// The send-future, this can be `.await`-ed to send the message.
-pub struct Snd<'a, M> {
-    channel: &'a Actor<M>,
-    msg: Option<M>,
+pub struct Snd<'a, M: Message, P> {
+    channel: &'a Actor<P>,
+    msg: Option<(P, M::Returns)>,
     fut: Option<SndFut>,
 }
 
@@ -69,32 +102,41 @@ enum SndFut {
     Sleep(Pin<Box<Sleep>>), // todo: can this box be removed?
 }
 
-impl<'a, M> Snd<'a, M> {
-    pub(crate) fn new(channel: &'a Actor<M>, msg: M) -> Self {
+impl<'a, M, P> Snd<'a, M, P>
+where
+    M: Message,
+    P: Accepts<M>,
+{
+    pub(crate) fn new(channel: &'a Actor<P>, msg: M) -> Self {
+        let (tx, rx) = Receiver::channel();
+        let msg = P::from_msg(msg, tx);
         Snd {
             channel,
-            msg: Some(msg),
+            msg: Some((msg, rx)),
             fut: None,
         }
     }
 }
 
-impl<'a, M> Unpin for Snd<'a, M> {}
+impl<'a, M: Message, P> Unpin for Snd<'a, M, P> {}
 
-impl<'a, M> Future for Snd<'a, M> {
-    type Output = Result<(), SendError<M>>;
+impl<'a, M, P> Future for Snd<'a, M, P>
+where
+    M: Message,
+{
+    type Output = Result<M::Returns, SendError<P>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        fn bounded_send<T>(
-            pin: &mut Pin<&mut Snd<'_, T>>,
+        fn bounded_send<T: Message, R>(
+            pin: &mut Pin<&mut Snd<'_, T, R>>,
             cx: &mut Context<'_>,
-        ) -> Poll<Result<(), SendError<T>>> {
-            let mut msg = pin.msg.take().unwrap();
+        ) -> Poll<Result<T::Returns, SendError<R>>> {
+            let (mut msg, rx) = pin.msg.take().unwrap();
             loop {
                 // Try to send a message into the channel, and return if possible
                 msg = match pin.channel.push_msg(msg) {
                     Ok(()) => {
-                        return Poll::Ready(Ok(()));
+                        return Poll::Ready(Ok(rx));
                     }
                     Err(PushError::Closed(msg)) => {
                         return Poll::Ready(Err(SendError(msg)));
@@ -112,7 +154,7 @@ impl<'a, M> Future for Snd<'a, M> {
                     match listener.poll_unpin(cx) {
                         Poll::Ready(()) => pin.fut = None,
                         Poll::Pending => {
-                            pin.msg = Some(msg);
+                            pin.msg = Some((msg, rx));
                             return Poll::Pending;
                         }
                     }
@@ -122,10 +164,12 @@ impl<'a, M> Future for Snd<'a, M> {
             }
         }
 
-        fn push_msg_unbounded<T>(pin: &mut Pin<&mut Snd<'_, T>>) -> Poll<Result<(), SendError<T>>> {
-            let msg = pin.msg.take().unwrap();
+        fn push_msg_unbounded<T: Message, R>(
+            pin: &mut Pin<&mut Snd<'_, T, R>>,
+        ) -> Poll<Result<T::Returns, SendError<R>>> {
+            let (msg, rx) = pin.msg.take().unwrap();
             match pin.channel.push_msg(msg) {
-                Ok(()) => Poll::Ready(Ok(())),
+                Ok(()) => Poll::Ready(Ok(rx)),
                 Err(PushError::Closed(msg)) => Poll::Ready(Err(SendError(msg))),
                 Err(PushError::Full(_msg)) => unreachable!(),
             }

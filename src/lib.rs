@@ -17,9 +17,24 @@ pub use channel::*;
 
 #[cfg(test)]
 pub(crate) mod test_helper {
+    use crate as tiny_actor;
+
+    #[derive(Message)]
+    pub struct TestMsg1;
+
+    #[protocol]
+    pub enum TestProt1 {
+        Msg(TestMsg1)
+    }
+
+    #[protocol]
+    pub enum TestProt2 {
+        Msg(TestMsg1)
+    }
+
     macro_rules! test_loop {
         () => {
-            test_helper::test_loop!(())
+            test_helper::test_loop!(test_helper::TestProt1)
         };
         ($ty:ty) => {
             |mut inbox: Inbox<$ty>| async move {
@@ -36,7 +51,7 @@ pub(crate) mod test_helper {
 
     macro_rules! test_many_loop {
         () => {
-            test_helper::test_many_loop!(())
+            test_helper::test_many_loop!(test_helper::TestProt1)
         };
         ($ty:ty) => {
             |_, mut inbox: Inbox<$ty>| async move {
@@ -50,4 +65,5 @@ pub(crate) mod test_helper {
         };
     }
     pub(crate) use test_many_loop;
+    use tiny_actor_codegen::{Message, protocol};
 }

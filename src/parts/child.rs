@@ -282,14 +282,14 @@ where
     /// This method can fail for 2 reasons:
     /// * The [Inbox]-type does not match that of the [Actor].
     /// * The [Actor] has already exited.
-    pub fn try_spawn<M, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
+    pub fn try_spawn<P, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
-        Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
+        Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
         Fut: Future<Output = E> + Send + 'static,
-        M: Send + 'static,
+        P: Protocol + Send + 'static,
         E: Send + 'static,
     {
-        let channel = match Arc::downcast::<Actor<M>>(self.channel.clone().into_any()) {
+        let channel = match Arc::downcast::<Actor<P>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
             Err(_) => return Err(TrySpawnError::Exited(fun)),
         };
@@ -325,7 +325,7 @@ where
     }
 }
 
-impl<E: Send + 'static, A: Send + 'static> ChildPool<E, Actor<A>> {
+impl<E: Send + 'static, P: Send + 'static> ChildPool<E, Actor<P>> {
     /// Convert the `ChildPool<E, Actor<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
@@ -344,9 +344,10 @@ impl<E: Send + 'static, A: Send + 'static> ChildPool<E, Actor<A>> {
     /// * The [Actor] has already exited.
     pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), SpawnError<Fun>>
     where
-        Fun: FnOnce(Inbox<A>) -> Fut + Send + 'static,
+        Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
         Fut: Future<Output = E> + Send + 'static,
         E: Send + 'static,
+        P: Protocol
     {
         match self.channel.try_add_inbox() {
             Ok(_) => {
@@ -519,7 +520,7 @@ mod test {
     #[tokio::test]
     async fn child_try_spawn_incorrect_type() {
         let (child, addr) = spawn_one(Config::default(), test_loop!());
-        let res = child.into_dyn().try_spawn(test_loop!(u32));
+        let res = child.into_dyn().try_spawn(test_loop!(TestProt2));
 
         matches!(res, Err(TrySpawnError::IncorrectType(_)));
         assert_eq!(addr.inbox_count(), 1);

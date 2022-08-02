@@ -1,5 +1,5 @@
 use crate::*;
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 /// The receiver trait is implemented for `()` and `Rx<M>`.
 ///
@@ -45,6 +45,40 @@ pub trait Message {
     type Returns: Receiver;
 }
 
+/// In order for an actor to receive any messages, it must first define a protocol.
+/// This protocol defines exactly which [Messages](Message) it can receive, and how
+/// to convert these messages into `Self`.
+///
+/// This trait goes together with [Accepts], and both are created using:
+/// ```ignore
+/// #[protocol]
+/// enum MyProtocol {
+///     MessageOne(u32),
+///     MessageTwo(MyCall)
+/// }
+/// ```
+///
+/// This creates the following struct:
+/// ```ignore
+/// enum MyProtocol {
+///     MessageOne(u32, ()),
+///     MessageTwo(MyCall, Tx<MyReply>)
+/// }
+/// ```
+///
+/// And generates `Protocol`, `Accepts<u32>` and `Accepts<MyCall>` implementations for
+/// `MyProtocol`.
+pub trait Protocol: Sized {
+    fn try_from_msg(boxed: BoxedMessage) -> Result<Self, BoxedMessage>;
+    fn accepts(msg_type_id: &TypeId) -> bool;
+}
+
+/// In order for an actor to receive a message, it must implement `Accept<Message>`.
+/// This is normally derived automatically, see [Protocol].
+pub trait Accepts<M: Message>: Protocol + Sized {
+    fn from_msg(msg: M, tx: <M::Returns as Receiver>::Sender) -> Self;
+}
+
 #[derive(Debug)]
 pub struct BoxedMessage(Box<dyn Any + Send + 'static>);
 
@@ -69,122 +103,93 @@ impl BoxedMessage {
     }
 }
 
-/// In order for an actor to receive any messages, it must first define a protocol.
-/// This protocol defines exactly which [Messages](Message) it can receive, and how
-/// to convert these messages into `Self`.
-///
-/// This trait goes together with [Handles], and both are created using:
-/// ```ignore
-/// #[protocol]
-/// enum MyProtocol {
-///     MessageOne(u32),
-///     MessageTwo(MyCall)
-/// }
-/// ```
-///
-/// This creates the following struct:
-/// ```ignore
-/// enum MyProtocol {
-///     MessageOne(u32, ()),
-///     MessageTwo(MyCall, Tx<MyReply>)
-/// }
-/// ```
-///
-/// And generates `Protocol`, `Handles<u32>` and `Handles<MyCall>` implementations for
-/// `MyProtocol`.
-pub trait Protocol: Sized {
-    fn try_from_box(boxed: BoxedMessage) -> Result<Self, BoxedMessage>;
-}
-
-/// In order for an actor to receive a message, it must implement `Handle<Message>`.
-/// This is normally derived automatically, see [Protocol].
-pub trait Handles<M: Message>: Protocol + Sized {
-    fn from_msg(msg: M, tx: <M::Returns as Receiver>::Sender) -> Self;
-}
-
-mod implementations {
-    use crate::*;
-
-    macro_rules! impl_msg {
-        ($($ty:ty),*) => {
-            $(
-                impl Message for $ty {
-                    type Returns = ();
-                }
-            )*
-        };
-    }
-
-    impl_msg!(
-        (),
-        u8,
-        u16,
-        u32,
-        u64,
-        u128,
-        i8,
-        i16,
-        i32,
-        i64,
-        i128,
-        String,
-        bool,
-        str
-    );
-}
-
 #[cfg(test)]
 mod test {
-    use crate::{self as tiny_actor, channel, BoxedMessage, Protocol, Handles};
+    use std::any::TypeId;
+
+    use crate::{
+        self as tiny_actor, channel, Accepts, BoxedMessage, Inbox, Message, Protocol, Receiver,
+    };
     use tiny_actor_codegen::{protocol, Message};
 
+    async fn send<M, P>(inbox: &Inbox<P>, msg: M) -> <M as Message>::Returns
+    where
+        P: Accepts<M>,
+        M: Message,
+    {
+        match inbox.send(msg).await {
+            Ok(returns) => returns,
+            Err(_) => todo!(),
+        }
+    }
+
     #[test]
-    fn derive_message_compiles() {
-        #[derive(Message, Debug, Clone)]
-        #[reply(())]
-        struct TestMessage1;
-
+    fn boxed_msg() {
         #[derive(Message)]
-        struct TestMessage2;
-
+        struct Msg1;
         #[derive(Message)]
-        #[reply(u32)]
-        enum TestMessage3 {
-            Variant,
+        struct Msg2;
+
+        let boxed = BoxedMessage::new(Msg1, ());
+        assert!(boxed.downcast::<Msg1>().is_ok());
+
+        let boxed = BoxedMessage::new(Msg1, ());
+        assert!(boxed.downcast::<Msg2>().is_err());
+    }
+
+    #[test]
+    fn basic_macros() {
+        use msg::*;
+        mod msg {
+            use super::*;
+
+            #[derive(Message, Debug, Clone)]
+            #[reply(())]
+            pub struct Msg1;
+
+            #[derive(Message)]
+            pub struct Msg2;
+
+            #[derive(Message)]
+            #[reply(u32)]
+            pub enum Msg3 {
+                Variant,
+            }
+
+            #[derive(Message)]
+            pub enum Msg4 {
+                Variant,
+            }
         }
 
         #[derive(Message)]
-        enum TestMessage4 {
-            Variant,
-        }
-
         #[protocol]
-        enum MyProtocol {
-            One(TestMessage1),
-            Two(TestMessage2),
-            Three(TestMessage3),
-            Four(TestMessage4),
+        enum Prot {
+            One(Msg1),
+            Two(Msg2),
+            Three(Msg3),
+            Four(Msg4),
         }
 
-        MyProtocol::One(TestMessage1, channel().0);
-        MyProtocol::Two(TestMessage2, ());
-        MyProtocol::Three(TestMessage3::Variant, channel().0);
-        MyProtocol::Four(TestMessage4::Variant, ());
+        Prot::One(Msg1, channel().0);
+        Prot::Two(Msg2, ());
+        Prot::Three(Msg3::Variant, channel().0);
+        Prot::Four(Msg4::Variant, ());
 
-        <MyProtocol as Protocol>::try_from_box(BoxedMessage::new(TestMessage1, channel().0))
-            .unwrap();
-        <MyProtocol as Protocol>::try_from_box(BoxedMessage::new(TestMessage2, ())).unwrap();
-        <MyProtocol as Protocol>::try_from_box(BoxedMessage::new(
-            TestMessage3::Variant,
-            channel().0,
-        ))
-        .unwrap();
-        <MyProtocol as Protocol>::try_from_box(BoxedMessage::new(TestMessage4::Variant, ()))
-            .unwrap();
+        <Prot as Protocol>::try_from_msg(BoxedMessage::new(Msg1, channel().0)).unwrap();
+        <Prot as Protocol>::try_from_msg(BoxedMessage::new(Msg2, ())).unwrap();
+        <Prot as Protocol>::try_from_msg(BoxedMessage::new(Msg3::Variant, channel().0)).unwrap();
+        <Prot as Protocol>::try_from_msg(BoxedMessage::new(Msg4::Variant, ())).unwrap();
 
-        let _val = <MyProtocol as Handles<_>>::from_msg(TestMessage1, channel().0);
-        let _val = <MyProtocol as Handles<_>>::from_msg(TestMessage2, ());
-        let _val = <MyProtocol as Handles<_>>::from_msg(TestMessage3::Variant, channel().0);
-        let _val = <MyProtocol as Handles<_>>::from_msg(TestMessage4::Variant, ());
+        assert!(<Prot as Protocol>::accepts(&TypeId::of::<Msg1>()));
+        assert!(<Prot as Protocol>::accepts(&TypeId::of::<Msg2>()));
+        assert!(<Prot as Protocol>::accepts(&TypeId::of::<Msg3>()));
+        assert!(<Prot as Protocol>::accepts(&TypeId::of::<Msg4>()));
+        assert!(!<Prot as Protocol>::accepts(&TypeId::of::<u32>()));
+
+        <Prot as Accepts<_>>::from_msg(Msg1, channel().0);
+        <Prot as Accepts<_>>::from_msg(Msg2, ());
+        <Prot as Accepts<_>>::from_msg(Msg3::Variant, channel().0);
+        <Prot as Accepts<_>>::from_msg(Msg4::Variant, ());
     }
 }

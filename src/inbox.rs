@@ -6,7 +6,7 @@ use std::{fmt::Debug, sync::Arc};
 #[derive(Debug)]
 pub struct Inbox<M> {
     // The underlying channel
-    channel: Arc<Channel<M>>,
+    channel: Arc<Actor<M>>,
     // The listener for receiving events
     listener: Option<el::EventListener>,
     // Whether this inbox has signaled halt yet
@@ -15,7 +15,7 @@ pub struct Inbox<M> {
 
 impl<M> Inbox<M> {
     /// This does not increment the inbox_count.
-    pub(crate) fn from_channel(channel: Arc<Channel<M>>) -> Self {
+    pub(crate) fn from_channel(channel: Arc<Actor<M>>) -> Self {
         Inbox {
             channel,
             listener: None,

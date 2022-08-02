@@ -7,7 +7,7 @@ use crate::*;
 use event_listener::EventListener;
 use futures::{Future, FutureExt};
 
-impl<M> Channel<M> {
+impl<M> Actor<M> {
     /// This will attempt to receive a message from the [Inbox]. If there is no message, this
     /// will return `None`.
     pub fn try_recv(&self, signaled_halt: &mut bool) -> Result<Option<M>, RecvError> {
@@ -34,7 +34,7 @@ impl<M> Channel<M> {
 }
 
 pub(crate) fn poll_recv<M>(
-    channel: &Channel<M>,
+    channel: &Actor<M>,
     signaled_halt: &mut bool,
     listener: &mut Option<EventListener>,
     cx: &mut Context<'_>,
@@ -75,7 +75,7 @@ pub(crate) fn poll_recv<M>(
 ///
 /// This can be `.await`-ed to get the message from the `Inbox`.
 pub struct Rcv<'a, M> {
-    channel: &'a Channel<M>,
+    channel: &'a Actor<M>,
     signaled_halt: &'a mut bool,
     listener: &'a mut Option<EventListener>,
 }

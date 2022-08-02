@@ -3,9 +3,9 @@ use std::{any::Any, fmt::Debug, sync::Arc};
 
 use crate::*;
 
-/// A [Channel]-trait, without information about it's message type. Therefore, it's impossible
+/// A [Actor]-trait, without information about it's message type. Therefore, it's impossible
 /// to send or receive messages through this.
-pub trait DynChannel {
+pub trait DynActor {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
     fn halt(&self);
@@ -21,17 +21,17 @@ pub trait DynChannel {
     fn actor_id(&self) -> u64;
 }
 
-pub trait AnyChannel: DynChannel + Debug + Send + Sync + 'static {
+pub trait AnyActor: DynActor + Debug + Send + Sync + 'static {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
-impl<M: Send + 'static> AnyChannel for Channel<M> {
+impl<M: Send + 'static> AnyActor for Actor<M> {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
 }
 
-impl<M> DynChannel for Channel<M> {
+impl<M> DynActor for Actor<M> {
     fn close(&self) -> bool {
         self.close()
     }

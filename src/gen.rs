@@ -1,6 +1,6 @@
 macro_rules! any_channel_methods {
     () => {
-        /// Close the [Channel].
+        /// Close the [Actor].
         pub fn close(&self) -> bool {
             self.channel.close()
         }
@@ -20,22 +20,22 @@ macro_rules! any_channel_methods {
             self.channel.inbox_count()
         }
 
-        /// Get the amount of messages in the [Channel].
+        /// Get the amount of messages in the [Actor].
         pub fn msg_count(&self) -> usize {
             self.channel.msg_count()
         }
 
-        /// Get the amount of [Addresses](Address) of the [Channel].
+        /// Get the amount of [Addresses](Address) of the [Actor].
         pub fn address_count(&self) -> usize {
             self.channel.address_count()
         }
 
-        /// Whether the [Channel] is closed.
+        /// Whether the [Actor] is closed.
         pub fn is_closed(&self) -> bool {
             self.channel.is_closed()
         }
 
-        /// Get the [Capacity] of the [Channel]. This cannot be changed.
+        /// Get the [Capacity] of the [Actor]. This cannot be changed.
         pub fn capacity(&self) -> &Capacity {
             self.channel.capacity()
         }
@@ -45,7 +45,7 @@ macro_rules! any_channel_methods {
             self.channel.has_exited()
         }
 
-        /// Get the actor_id of the [Channel].
+        /// Get the actor_id of the [Actor].
         pub fn actor_id(&self) -> u64 {
             self.channel.actor_id()
         }
@@ -55,31 +55,31 @@ pub(crate) use any_channel_methods;
 
 macro_rules! send_methods {
     () => {
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message into the [Actor].
         ///
-        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will fail.
-        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        /// In the case of an `unbounded` [Actor], when [BackPressure] returns a timeout, this will fail.
+        /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [send_now](Address::send_now).
         pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
             self.channel.try_send(msg)
         }
 
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message into the [Actor].
         ///
-        /// In the case of an `unbounded` [Channel], any [BackPressure] is ignored.
-        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        /// In the case of an `unbounded` [Actor], any [BackPressure] is ignored.
+        /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [try_send](Address::send_now).
         pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
             self.channel.send_now(msg)
         }
 
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message into the [Actor].
         ///
-        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will
+        /// In the case of an `unbounded` [Actor], when [BackPressure] returns a timeout, this will
         /// wait and then send the message.
-        /// In the case of a `bounded` [Channel], when it is full, this will wait untill space is
+        /// In the case of a `bounded` [Actor], when it is full, this will wait untill space is
         /// available.
         pub fn send(&self, msg: M) -> Snd<'_, M> {
             self.channel.send(msg)

@@ -1,7 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod address;
-mod channel;
+mod actor;
 mod child;
 mod config;
 mod gen;
@@ -9,7 +9,7 @@ mod inbox;
 mod spawning;
 
 pub use address::*;
-pub use channel::*;
+pub use actor::*;
 pub use child::*;
 pub use config::*;
 pub use inbox::*;

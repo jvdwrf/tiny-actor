@@ -10,9 +10,9 @@ use std::{
 };
 
 #[derive(Debug)]
-pub struct Address<C = dyn AnyChannel>
+pub struct Address<C = dyn AnyActor>
 where
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     channel: Arc<C>,
     exit_listener: Option<EventListener>,
@@ -20,7 +20,7 @@ where
 
 impl<C> Address<C>
 where
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     /// Does not increment the address-count.
     pub(crate) fn from_channel(channel: Arc<C>) -> Self {
@@ -43,7 +43,7 @@ where
         }
     }
 
-    /// Get a new [Address] to the [Channel].
+    /// Get a new [Address] to the [Actor].
     pub fn get_address(&self) -> Address<C> {
         self.channel.add_address();
         Address::from_channel(self.channel.clone())
@@ -52,11 +52,11 @@ where
     gen::any_channel_methods!();
 }
 
-impl<M> Address<Channel<M>>
+impl<M> Address<Actor<M>>
 where
     M: Send + 'static,
 {
-    /// Convert the `Address<Channel<M>>` into an `Address`.
+    /// Convert the `Address<Actor<M>>` into an `Address`.
     pub fn into_dyn(self) -> Address {
         let (channel, exit_listener) = self.into_parts();
         Address {
@@ -69,8 +69,8 @@ where
 }
 
 impl Address {
-    /// Attempt to the downcast the `Address` into an `Address<Channel<M>>`.
-    pub fn downcast<M: Send + 'static>(self) -> Result<Address<Channel<M>>, Self> {
+    /// Attempt to the downcast the `Address` into an `Address<Actor<M>>`.
+    pub fn downcast<M: Send + 'static>(self) -> Result<Address<Actor<M>>, Self> {
         let (channel, exit_listener) = self.into_parts();
         match channel.clone().into_any().downcast() {
             Ok(channel) => Ok(Address {
@@ -85,7 +85,7 @@ impl Address {
     }
 }
 
-impl<C: DynChannel + ?Sized> Future for Address<C> {
+impl<C: DynActor + ?Sized> Future for Address<C> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -107,9 +107,9 @@ impl<C: DynChannel + ?Sized> Future for Address<C> {
     }
 }
 
-impl<C: DynChannel + ?Sized> Unpin for Address<C> {}
+impl<C: DynActor + ?Sized> Unpin for Address<C> {}
 
-impl<C: DynChannel + ?Sized> Clone for Address<C> {
+impl<C: DynActor + ?Sized> Clone for Address<C> {
     fn clone(&self) -> Self {
         self.channel.add_address();
         Self {
@@ -119,7 +119,7 @@ impl<C: DynChannel + ?Sized> Clone for Address<C> {
     }
 }
 
-impl<C: DynChannel + ?Sized> Drop for Address<C> {
+impl<C: DynActor + ?Sized> Drop for Address<C> {
     fn drop(&mut self) {
         self.channel.remove_address()
     }

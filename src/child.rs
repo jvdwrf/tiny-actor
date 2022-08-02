@@ -4,10 +4,10 @@ use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
-pub struct Child<E, C = dyn AnyChannel>
+pub struct Child<E, C = dyn AnyActor>
 where
     E: Send + 'static,
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     handle: Option<JoinHandle<E>>,
     channel: Arc<C>,
@@ -18,7 +18,7 @@ where
 impl<E, C> Child<E, C>
 where
     E: Send + 'static,
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     pub(crate) fn new(channel: Arc<C>, join_handle: JoinHandle<E>, link: Link) -> Self {
         Self {
@@ -85,12 +85,12 @@ where
 impl<E, C> Child<E, C>
 where
     E: Send + 'static,
-    C: AnyChannel + ?Sized,
+    C: AnyActor + ?Sized,
 {
-    /// Downcast the `Child<E>` to a `Child<E, Channel<M>>`.
-    pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self> {
+    /// Downcast the `Child<E>` to a `Child<E, Actor<M>>`.
+    pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Actor<M>>, Self> {
         let (channel, handle, link, is_aborted) = self.into_parts();
-        match channel.clone().into_any().downcast::<Channel<M>>() {
+        match channel.clone().into_any().downcast::<Actor<M>>() {
             Ok(channel) => Ok(Child {
                 handle: Some(handle),
                 channel,
@@ -107,12 +107,12 @@ where
     }
 }
 
-impl<E, M> Child<E, Channel<M>>
+impl<E, M> Child<E, Actor<M>>
 where
     E: Send + 'static,
     M: Send + 'static,
 {
-    /// Convert the `Child<T, Channel<M>>` into a `Child<T>`
+    /// Convert the `Child<T, Actor<M>>` into a `Child<T>`
     pub fn into_dyn(self) -> Child<E> {
         let parts = self.into_parts();
         Child {
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for Child<E, C> {
+impl<E: Send + 'static, C: DynActor + ?Sized> Drop for Child<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -143,9 +143,9 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for Child<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for Child<E, C> {}
+impl<E: Send + 'static, C: DynActor + ?Sized> Unpin for Child<E, C> {}
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
+impl<E: Send + 'static, C: DynActor + ?Sized> Future for Child<E, C> {
     type Output = Result<E, ExitError>;
 
     fn poll(
@@ -165,10 +165,10 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
 //------------------------------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct ChildPool<E, C = dyn AnyChannel>
+pub struct ChildPool<E, C = dyn AnyActor>
 where
     E: Send + 'static,
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     channel: Arc<C>,
     handles: Option<Vec<JoinHandle<E>>>,
@@ -179,7 +179,7 @@ where
 impl<E, C> ChildPool<E, C>
 where
     E: Send + 'static,
-    C: DynChannel + ?Sized,
+    C: DynActor + ?Sized,
 {
     pub(crate) fn new(channel: Arc<C>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
         Self {
@@ -275,13 +275,13 @@ where
 impl<E, C> ChildPool<E, C>
 where
     E: Send + 'static,
-    C: AnyChannel + ?Sized,
+    C: AnyActor + ?Sized,
 {
-    /// Attempt to spawn an additional process onto the [Channel].
+    /// Attempt to spawn an additional process onto the [Actor].
     ///
     /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the [Channel].
-    /// * The [Channel] has already exited.
+    /// * The [Inbox]-type does not match that of the [Actor].
+    /// * The [Actor] has already exited.
     pub fn try_spawn<M, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -289,7 +289,7 @@ where
         M: Send + 'static,
         E: Send + 'static,
     {
-        let channel = match Arc::downcast::<Channel<M>>(self.channel.clone().into_any()) {
+        let channel = match Arc::downcast::<Actor<M>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
             Err(_) => return Err(TrySpawnError::Exited(fun)),
         };
@@ -305,10 +305,10 @@ where
         }
     }
 
-    /// Downcast the `ChildPool<E>` to a `ChildPool<E, Channel<M>>`
-    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Channel<M>>, Self> {
+    /// Downcast the `ChildPool<E>` to a `ChildPool<E, Actor<M>>`
+    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Actor<M>>, Self> {
         let (channel, handles, link, is_aborted) = self.into_parts();
-        match channel.clone().into_any().downcast::<Channel<M>>() {
+        match channel.clone().into_any().downcast::<Actor<M>>() {
             Ok(channel) => Ok(ChildPool {
                 handles: Some(handles),
                 channel,
@@ -325,8 +325,8 @@ where
     }
 }
 
-impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
-    /// Convert the `ChildPool<E, Channel<M>` into a `ChildPool<E>`.
+impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Actor<M>> {
+    /// Convert the `ChildPool<E, Actor<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
         ChildPool {
@@ -337,11 +337,11 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
         }
     }
 
-    /// Attempt to spawn an additional process on to this [Channel].
+    /// Attempt to spawn an additional process on to this [Actor].
     ///
     /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the [Channel].
-    /// * The [Channel] has already exited.
+    /// * The [Inbox]-type does not match that of the [Actor].
+    /// * The [Actor] has already exited.
     pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), SpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -360,7 +360,7 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
     }
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Stream for ChildPool<E, C> {
+impl<E: Send + 'static, C: DynActor + ?Sized> Stream for ChildPool<E, C> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(
@@ -382,7 +382,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Stream for ChildPool<E, C> {
     }
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
+impl<E: Send + 'static, C: DynActor + ?Sized> Drop for ChildPool<E, C> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -445,10 +445,10 @@ impl From<tokio::task::JoinError> for ExitError {
     }
 }
 
-/// An error returned when trying to spawn more processes onto a [Channel].
+/// An error returned when trying to spawn more processes onto a [Actor].
 #[derive(Clone, thiserror::Error)]
 pub enum TrySpawnError<T> {
-    #[error("Channel has already exited")]
+    #[error("Actor has already exited")]
     Exited(T),
     #[error("Inbox type did not match")]
     IncorrectType(T),
@@ -463,9 +463,9 @@ impl<T> Debug for TrySpawnError<T> {
     }
 }
 
-/// An error returned when spawning more processes onto a [Channel].
+/// An error returned when spawning more processes onto a [Actor].
 ///
-/// This can only happen if the [Channel] has already exited.
+/// This can only happen if the [Actor] has already exited.
 #[derive(Clone, thiserror::Error)]
 #[error("Can't spawn a new inbox because the channel has exited")]
 pub struct SpawnError<T>(pub T);

@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::time::Sleep;
 
-impl<M> Channel<M> {
+impl<M> Actor<M> {
     pub(crate) fn send(&self, msg: M) -> Snd<'_, M> {
         Snd::new(self, msg)
     }
@@ -58,7 +58,7 @@ impl<M> Channel<M> {
 
 /// The send-future, this can be `.await`-ed to send the message.
 pub struct Snd<'a, M> {
-    channel: &'a Channel<M>,
+    channel: &'a Actor<M>,
     msg: Option<M>,
     fut: Option<SndFut>,
 }
@@ -70,7 +70,7 @@ enum SndFut {
 }
 
 impl<'a, M> Snd<'a, M> {
-    pub(crate) fn new(channel: &'a Channel<M>, msg: M) -> Self {
+    pub(crate) fn new(channel: &'a Actor<M>, msg: M) -> Self {
         Snd {
             channel,
             msg: Some(msg),
@@ -117,7 +117,7 @@ impl<'a, M> Future for Snd<'a, M> {
                         }
                     }
                 } else {
-                    unreachable!("Channel must be bounded")
+                    unreachable!("Actor must be bounded")
                 }
             }
         }
@@ -154,15 +154,15 @@ impl<'a, M> Future for Snd<'a, M> {
                     }
                     None => push_msg_unbounded(&mut self),
                 },
-                Some(SndFut::Listener(_)) => unreachable!("Channel must be unbounded"),
+                Some(SndFut::Listener(_)) => unreachable!("Actor must be unbounded"),
             },
         }
     }
 }
 
-/// An error returned when trying to send a message into a `Channel`, but not waiting for space.
+/// An error returned when trying to send a message into a `Actor`, but not waiting for space.
 ///
-/// This can be either because the `Channel` is closed, or because it is full.
+/// This can be either because the `Actor` is closed, or because it is full.
 #[derive(Debug, Clone)]
 pub enum TrySendError<M> {
     Closed(M),
@@ -178,6 +178,6 @@ impl<M> From<PushError<M>> for TrySendError<M> {
     }
 }
 
-/// An error returned when sending a message into a `Channel` because the `Channel` is closed.
+/// An error returned when sending a message into a `Actor` because the `Actor` is closed.
 #[derive(Debug, Clone)]
 pub struct SendError<M>(pub M);

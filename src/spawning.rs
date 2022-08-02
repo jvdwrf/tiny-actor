@@ -6,7 +6,7 @@ use std::sync::Arc;
 /// and [Address]. The `Process` is spawned with a single [Inbox].
 ///
 /// This will immeadeately start the spawning. `await`-ing the [Spawn]-future will
-/// wait until the [Channel] is fully initialized.
+/// wait until the [Actor] is fully initialized.
 ///
 /// # Example
 /// ```no_run
@@ -25,14 +25,14 @@ use std::sync::Arc;
 pub fn spawn<M, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (Child<E, Channel<M>>, Address<Channel<M>>)
+) -> (Child<E, Actor<M>>, Address<Actor<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
     M: Send + 'static,
 {
-    let channel = Arc::new(Channel::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -62,14 +62,14 @@ where
 pub fn spawn_one<M, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
+) -> (ChildPool<E, Actor<M>>, Address<Actor<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
     M: Send + 'static,
 {
-    let channel = Arc::new(Channel::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -104,7 +104,7 @@ pub fn spawn_many<M, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
+) -> (ChildPool<E, Actor<M>>, Address<Actor<M>>)
 where
     Fun: FnOnce(I, Inbox<M>) -> Fut + Send + 'static + Clone,
     Fut: Future<Output = E> + Send + 'static,
@@ -113,7 +113,7 @@ where
     I: Send + 'static,
 {
     let iter = iter.into_iter();
-    let channel = Arc::new(Channel::<M>::new(1, 1, config.capacity));
+    let channel = Arc::new(Actor::<M>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
 
     let handles = iter

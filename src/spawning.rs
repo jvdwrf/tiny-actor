@@ -1,6 +1,6 @@
 use crate::*;
 use futures::Future;
-use std::{sync::Arc};
+use std::sync::Arc;
 
 /// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
 /// and [Address]. The `Process` is spawned with a single [Inbox].
@@ -22,7 +22,10 @@ use std::{sync::Arc};
 ///     });
 ///# }
 /// ```
-pub fn spawn<M, E, Fun, Fut>(config: Config, fun: Fun) -> (Child<E, Channel<M>>, Address<Channel<M>>)
+pub fn spawn<M, E, Fun, Fut>(
+    config: Config,
+    fun: Fun,
+) -> (Child<E, Channel<M>>, Address<Channel<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
@@ -56,7 +59,10 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_one<M, E, Fun, Fut>(config: Config, fun: Fun) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
+pub fn spawn_one<M, E, Fun, Fut>(
+    config: Config,
+    fun: Fun,
+) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
 where
     Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
@@ -73,8 +79,6 @@ where
 
     (child, address)
 }
-
-
 
 /// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
 /// and [Address]. The `Process`es are spawned with [Inbox]es.

@@ -212,9 +212,21 @@ mod test {
             growth: Growth::Exponential(1.1),
         };
 
-        assert_eq!(cfg.get_timeout(0), Some(Duration::from_nanos(1_000_000_000)));
-        assert_eq!(cfg.get_timeout(1), Some(Duration::from_nanos(1_100_000_000)));
-        assert_eq!(cfg.get_timeout(2), Some(Duration::from_nanos(1_210_000_000)));
-        assert_eq!(cfg.get_timeout(3), Some(Duration::from_nanos(1_331_000_064)));
+        assert_eq!(
+            cfg.get_timeout(0),
+            Some(Duration::from_nanos(1_000_000_000))
+        );
+        assert_eq!(
+            cfg.get_timeout(1),
+            Some(Duration::from_nanos(1_100_000_000))
+        );
+        assert_eq!(
+            cfg.get_timeout(2),
+            Some(Duration::from_nanos(1_210_000_000))
+        );
+        assert_eq!(
+            cfg.get_timeout(3),
+            Some(Duration::from_nanos(1_331_000_064))
+        );
     }
 }

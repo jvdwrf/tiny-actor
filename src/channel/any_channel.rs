@@ -1,5 +1,5 @@
-use std::{sync::Arc, any::Any, fmt::Debug};
 use event_listener::EventListener;
+use std::{any::Any, fmt::Debug, sync::Arc};
 
 use crate::*;
 

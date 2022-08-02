@@ -4,9 +4,9 @@ mod address;
 mod channel;
 mod child;
 mod config;
+mod gen;
 mod inbox;
 mod spawning;
-mod gen;
 
 pub use address::*;
 pub use channel::*;

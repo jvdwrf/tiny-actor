@@ -1,18 +1,14 @@
 #![doc = include_str!("../README.md")]
 
-mod address;
 mod channel;
-mod child;
 mod config;
 mod gen;
-mod inbox;
 mod spawning;
+mod parts;
 
-pub use address::*;
+pub use parts::*;
 pub use channel::*;
-pub use child::*;
 pub use config::*;
-pub use inbox::*;
 pub use spawning::*;
 
 #[cfg(test)]

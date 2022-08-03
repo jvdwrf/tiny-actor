@@ -78,17 +78,11 @@ where
         }
     }
 
-    gen::child_methods!();
-    gen::dyn_channel_methods!();
-}
-
-impl<E, C> Child<E, C>
-where
-    E: Send + 'static,
-    C: AnyChannel + ?Sized,
-{
     /// Downcast the `Child<E>` to a `Child<E, Channel<M>>`.
-    pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self> {
+    pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Channel<M>>, Self>
+    where
+        C: AnyChannel,
+    {
         let (channel, handle, link, is_aborted) = self.into_parts();
         match channel.clone().into_any().downcast::<Channel<M>>() {
             Ok(channel) => Ok(Child {
@@ -105,6 +99,9 @@ where
             }),
         }
     }
+
+    gen::child_methods!();
+    gen::dyn_channel_methods!();
 }
 
 impl<E, M> Child<E, Channel<M>>
@@ -301,15 +298,6 @@ where
         }
     }
 
-    gen::dyn_channel_methods!();
-    gen::child_methods!();
-}
-
-impl<E, C> ChildPool<E, C>
-where
-    E: Send + 'static,
-    C: AnyChannel + ?Sized,
-{
     /// Attempt to spawn an additional process onto the [Channel].
     ///
     /// This method can fail for 2 reasons:
@@ -321,6 +309,7 @@ where
         Fut: Future<Output = E> + Send + 'static,
         M: Send + 'static,
         E: Send + 'static,
+        C: AnyChannel,
     {
         let channel = match Arc::downcast::<Channel<M>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
@@ -339,7 +328,11 @@ where
     }
 
     /// Downcast the `ChildPool<E>` to a `ChildPool<E, Channel<M>>`
-    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Channel<M>>, Self> {
+    pub fn downcast<M>(self) -> Result<ChildPool<E, Channel<M>>, Self>
+    where
+        M: Send + 'static,
+        C: AnyChannel,
+    {
         let (channel, handles, link, is_aborted) = self.into_parts();
         match channel.clone().into_any().downcast::<Channel<M>>() {
             Ok(channel) => Ok(ChildPool {
@@ -356,9 +349,16 @@ where
             }),
         }
     }
+
+    gen::dyn_channel_methods!();
+    gen::child_methods!();
 }
 
-impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
+impl<E, M> ChildPool<E, Channel<M>>
+where
+    E: Send + 'static,
+    M: Send + 'static,
+{
     /// Convert the `ChildPool<E, Channel<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
@@ -390,6 +390,39 @@ impl<E: Send + 'static, M: Send + 'static> ChildPool<E, Channel<M>> {
             }
             Err(_) => Err(SpawnError(fun)),
         }
+    }
+}
+
+#[cfg(feature = "internals")]
+impl<E, C> ChildPool<E, C>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
+    pub fn transform_channel<C2: DynChannel + ?Sized>(
+        self,
+        func: fn(Arc<C>) -> Arc<C2>,
+    ) -> ChildPool<E, C2> {
+        let (channel, handles, link, is_aborted) = self.into_parts();
+        ChildPool {
+            channel: func(channel),
+            handles: Some(handles),
+            link,
+            is_aborted,
+        }
+    }
+
+    pub fn inner_ref(&self) -> (&C, &Option<Vec<JoinHandle<E>>>, &Link, &bool) {
+        (&self.channel, &self.handles, &self.link, &self.is_aborted)
+    }
+
+    pub fn inner_mut(&mut self) -> (&C, &mut Option<Vec<JoinHandle<E>>>, &mut Link, &mut bool) {
+        (
+            &self.channel,
+            &mut self.handles,
+            &mut self.link,
+            &mut self.is_aborted,
+        )
     }
 }
 

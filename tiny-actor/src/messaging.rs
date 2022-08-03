@@ -107,10 +107,8 @@ impl BoxedMessage {
 mod test {
     use std::any::TypeId;
 
-    use crate::{
-        self as tiny_actor, channel, Accepts, BoxedMessage, Inbox, Message, Protocol, Receiver,
-    };
-    use tiny_actor_codegen::{protocol, Message};
+    use crate::*;
+    use crate as tiny_actor;
 
     async fn send<M, P>(inbox: &Inbox<P>, msg: M) -> <M as Message>::Returns
     where

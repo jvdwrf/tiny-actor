@@ -1,4 +1,4 @@
-#![doc = include_str!("../README.md")]
+#![doc = include_str!("../../README.md")]
 
 mod actor;
 mod config;
@@ -14,6 +14,7 @@ pub use spawning::*;
 pub use parts::*;
 pub use messaging::*;
 pub use channel::*;
+pub use tiny_actor_codegen::*;
 
 #[cfg(test)]
 pub(crate) mod test_helper {

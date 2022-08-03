@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// wait until the [Actor] is fully initialized.
 ///
 /// # Example
-/// ```no_run
+/// ```ignore
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {
@@ -46,7 +46,7 @@ where
 /// Same as [spawn], but returns a [ChildPool] instead of a [Child].
 ///
 /// # Example
-/// ```no_run
+/// ```ignore
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {
@@ -87,7 +87,7 @@ where
 /// Every process get's access to a single item within the iterator as it's first argument.
 ///
 /// # Example
-/// ```no_run
+/// ```ignore
 ///# use tiny_actor::*;
 ///# #[tokio::main]
 ///# async fn main() {

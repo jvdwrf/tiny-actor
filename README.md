@@ -75,13 +75,32 @@ An `Actor` can either be bounded or unbounded. A bounded `Actor` can receive mes
 # Examples
 
 ## Basic
-```rust
+```ignore
 use tiny_actor::*;
 use std::time::Duration;
 
+// First we define 2 messages:
+// SayHi does not return anything, ...
+#[derive(Message, Debug)]
+struct SayHi;
+
+// while Echo returns a String.
+#[derive(Message, Debug)]
+#[reply(String)]
+struct Echo(String);
+
+// Now we can define a protocol that accepts both messages.
+#[protocol]
+#[derive(Debug)]
+enum MyProtocol {
+    One(SayHi),
+    Two(Echo)
+}
+
 #[tokio::main]
 async fn main() {
-    let (child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
+    // Spawn an process with a default config, and an Inbox<MyProtocol>
+    let (child, address) = spawn(Config::default(), |mut inbox: Inbox<MyProtocol>| async move {
         loop {
             match inbox.recv().await {
                 Ok(msg) => println!("Received message: {msg}"),
@@ -99,7 +118,7 @@ async fn main() {
         }
     });
 
-    address.send(10).await.unwrap();
+    address.send(Echo("hi".to_string())).await.unwrap();
     address.send(5).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(10));
@@ -120,7 +139,7 @@ async fn main() {
 ```
 
 ## Pooled with config
-```rust
+```ignore
 use tiny_actor::*;
 use std::time::Duration;
 use futures::stream::StreamExt;

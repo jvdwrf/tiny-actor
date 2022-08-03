@@ -10,6 +10,9 @@ keywords = ["actor", "actor-system", "tokio", "pool"]
 categories = ["concurrency"]
 authors = ["jvdwrf"]
 
+[features]
+internals = []
+
 [dependencies]
 event-listener = "2.5.2"
 futures = "0.3.0"

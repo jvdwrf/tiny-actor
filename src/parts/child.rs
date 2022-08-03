@@ -79,7 +79,7 @@ where
     }
 
     gen::child_methods!();
-    gen::any_channel_methods!();
+    gen::dyn_channel_methods!();
 }
 
 impl<E, C> Child<E, C>
@@ -121,6 +121,39 @@ where
             link: parts.2,
             is_aborted: parts.3,
         }
+    }
+}
+
+#[cfg(feature = "internals")]
+impl<E, C> Child<E, C>
+where
+    E: Send + 'static,
+    C: DynChannel + ?Sized,
+{
+    pub fn transform_channel<C2: DynChannel + ?Sized>(
+        self,
+        func: fn(Arc<C>) -> Arc<C2>,
+    ) -> Child<E, C2> {
+        let (channel, handle, link, is_aborted) = self.into_parts();
+        Child {
+            channel: func(channel),
+            handle: Some(handle),
+            link,
+            is_aborted,
+        }
+    }
+
+    pub fn inner_ref(&self) -> (&C, &Option<JoinHandle<E>>, &Link, &bool) {
+        (&self.channel, &self.handle, &self.link, &self.is_aborted)
+    }
+
+    pub fn inner_mut(&mut self) -> (&C, &mut Option<JoinHandle<E>>, &mut Link, &mut bool) {
+        (
+            &self.channel,
+            &mut self.handle,
+            &mut self.link,
+            &mut self.is_aborted,
+        )
     }
 }
 
@@ -268,7 +301,7 @@ where
         }
     }
 
-    gen::any_channel_methods!();
+    gen::dyn_channel_methods!();
     gen::child_methods!();
 }
 

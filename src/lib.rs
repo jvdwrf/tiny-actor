@@ -3,12 +3,12 @@
 mod channel;
 mod config;
 mod gen;
-mod spawning;
 mod parts;
+mod spawning;
 
-pub use parts::*;
 pub use channel::*;
 pub use config::*;
+pub use parts::*;
 pub use spawning::*;
 
 #[cfg(test)]

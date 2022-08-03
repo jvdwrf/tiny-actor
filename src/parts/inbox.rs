@@ -36,7 +36,7 @@ impl<M> Inbox<M> {
     }
 
     gen::send_methods!();
-    gen::any_channel_methods!();
+    gen::dyn_channel_methods!();
 }
 
 // It should be fine to share the same event-listener between inbox-stream and

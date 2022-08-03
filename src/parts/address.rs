@@ -49,28 +49,11 @@ where
         Address::from_channel(self.channel.clone())
     }
 
-    gen::any_channel_methods!();
-}
-
-impl<M> Address<Channel<M>>
-where
-    M: Send + 'static,
-{
-    /// Convert the `Address<Channel<M>>` into an `Address`.
-    pub fn into_dyn(self) -> Address {
-        let (channel, exit_listener) = self.into_parts();
-        Address {
-            channel,
-            exit_listener,
-        }
-    }
-
-    gen::send_methods!();
-}
-
-impl Address {
     /// Attempt to the downcast the `Address` into an `Address<Channel<M>>`.
-    pub fn downcast<M: Send + 'static>(self) -> Result<Address<Channel<M>>, Self> {
+    pub fn downcast<M: Send + 'static>(self) -> Result<Address<Channel<M>>, Self>
+    where
+        C: AnyChannel,
+    {
         let (channel, exit_listener) = self.into_parts();
         match channel.clone().into_any().downcast() {
             Ok(channel) => Ok(Address {
@@ -82,6 +65,49 @@ impl Address {
                 exit_listener,
             }),
         }
+    }
+
+    gen::dyn_channel_methods!();
+}
+
+impl<M> Address<Channel<M>> {
+    /// Convert the `Address<Channel<M>>` into an `Address`.
+    pub fn into_dyn(self) -> Address
+    where
+        M: Send + 'static,
+    {
+        let (channel, exit_listener) = self.into_parts();
+        Address {
+            channel,
+            exit_listener,
+        }
+    }
+
+    gen::send_methods!();
+}
+
+#[cfg(feature = "internals")]
+impl<C> Address<C>
+where
+    C: DynChannel + ?Sized,
+{
+    pub fn transform_channel<C2: DynChannel + ?Sized>(
+        self,
+        func: fn(Arc<C>) -> Arc<C2>,
+    ) -> Address<C2> {
+        let (channel, exit_listener) = self.into_parts();
+        Address {
+            channel: func(channel),
+            exit_listener,
+        }
+    }
+
+    pub fn inner_ref(&self) -> (&C, &Option<EventListener>) {
+        (&self.channel, &self.exit_listener)
+    }
+
+    pub fn inner_mut(&mut self) -> (&C, &mut Option<EventListener>) {
+        (&self.channel, &mut self.exit_listener)
     }
 }
 

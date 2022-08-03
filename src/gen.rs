@@ -1,4 +1,4 @@
-macro_rules! any_channel_methods {
+macro_rules! dyn_channel_methods {
     () => {
         /// Close the [Channel].
         pub fn close(&self) -> bool {
@@ -51,7 +51,7 @@ macro_rules! any_channel_methods {
         }
     };
 }
-pub(crate) use any_channel_methods;
+pub(crate) use dyn_channel_methods;
 
 macro_rules! send_methods {
     () => {

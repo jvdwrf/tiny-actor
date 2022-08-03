@@ -75,7 +75,7 @@ pub fn protocol(attr: TokenStream1, item: TokenStream1) -> TokenStream1 {
 mod protocol {
     use proc_macro2::{Ident, TokenStream, Span};
     use quote::quote;
-    use syn::{parse2, Error, ItemEnum, Type, Fields, Field, Visibility, parse_quote, spanned::Spanned};
+    use syn::{parse2, Error, ItemEnum, Type, Fields, Field, Visibility, parse_quote};
 
     pub fn protocol(_attr: TokenStream, item: TokenStream) -> Result<TokenStream, Error> {
         let mut item = parse2::<ItemEnum>(item)?;

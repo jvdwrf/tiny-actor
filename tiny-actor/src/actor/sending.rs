@@ -89,6 +89,39 @@ impl<P: Protocol> Actor<P> {
     }
 }
 
+pub struct SndRcv<'a, M: Message<Returns = Rx<R>>, R, P> {
+    snd: Snd<'a, M, P>,
+    rx: Option<Rx<R>>,
+}
+
+impl<'a, M: Message<Returns = Rx<R>>, R, P> Future for SndRcv<'a, M, R, P> {
+    type Output = Result<R, SendRecvError<P>>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        if let Some(rx) = &mut self.rx {
+            rx.poll_unpin(cx).map_err(|_| SendRecvError::NoReply)
+        } else {
+            match self.snd.poll_unpin(cx) {
+                Poll::Ready(res) => match res {
+                    Ok(mut rx) => {
+                        if let Poll::Ready(res) = rx.poll_unpin(cx) {
+                            match res {
+                                Ok(reply) => Poll::Ready(Ok(reply)),
+                                Err(_) => Poll::Ready(Err(SendRecvError::NoReply)),
+                            }
+                        } else {
+                            self.rx = Some(rx);
+                            Poll::Pending
+                        }
+                    }
+                    Err(SendError(msg)) => Poll::Ready(Err(SendRecvError::Closed(msg))),
+                },
+                Poll::Pending => Poll::Pending,
+            }
+        }
+    }
+}
+
 /// The send-future, this can be `.await`-ed to send the message.
 pub struct Snd<'a, M: Message, P> {
     channel: &'a Actor<P>,
@@ -114,6 +147,16 @@ where
             channel,
             msg: Some((msg, rx)),
             fut: None,
+        }
+    }
+
+    pub fn recv<R>(self) -> SndRcv<'a, M, R, P>
+    where
+        M: Message<Returns = Rx<R>>,
+    {
+        SndRcv {
+            snd: self,
+            rx: None,
         }
     }
 }
@@ -225,3 +268,9 @@ impl<M> From<PushError<M>> for TrySendError<M> {
 /// An error returned when sending a message into a `Actor` because the `Actor` is closed.
 #[derive(Debug, Clone)]
 pub struct SendError<M>(pub M);
+
+#[derive(Debug, Clone)]
+pub enum SendRecvError<M> {
+    Closed(M),
+    NoReply,
+}

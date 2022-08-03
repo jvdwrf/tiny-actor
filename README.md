@@ -72,12 +72,13 @@ An `Actor` can either be bounded or unbounded. A bounded `Actor` can receive mes
 * `Attached` with an abort-timer of `1 sec`. 
 * `Unbounded` capacity with BackPressure timeout starting from `5 messages` at `25ns` with an `exponential` growth-factor of `1.3`.
 
-# Examples
+# Getting started
 
-## Basic
-```ignore
-use tiny_actor::*;
+The following is a basic example to help get started, for more complex examples, look at the `./examples` folder.
+
+```rust
 use std::time::Duration;
+use tiny_actor::*;
 
 // First we define 2 messages:
 // SayHi does not return anything, ...
@@ -94,72 +95,27 @@ struct Echo(String);
 #[derive(Debug)]
 enum MyProtocol {
     One(SayHi),
-    Two(Echo)
+    Two(Echo),
 }
 
 #[tokio::main]
 async fn main() {
     // Spawn an process with a default config, and an Inbox<MyProtocol>
-    let (child, address) = spawn(Config::default(), |mut inbox: Inbox<MyProtocol>| async move {
-        loop {
-            match inbox.recv().await {
-                Ok(msg) => println!("Received message: {msg}"),
-                Err(error) => match error {
-                    RecvError::Halted => {
-                        println!("Actor has received halt signal - Exiting now...");
-                        break "Halt";
-                    }
-                    RecvError::ClosedAndEmpty => {
-                        println!("Actor is closed - Exiting now...");
-                        break "Closed";
-                    }
-                },
-            }
-        }
-    });
-
-    address.send(Echo("hi".to_string())).await.unwrap();
-    address.send(5).await.unwrap();
-
-    tokio::time::sleep(Duration::from_millis(10));
-
-    child.halt();
-
-    match child.await {
-        Ok(exit) => {
-            assert_eq!(exit, "Halt");
-            println!("Actor exited with message: {exit}")
-        },
-        Err(error) => match error {
-            ExitError::Panic(_) => todo!(),
-            ExitError::Abort => todo!(),
-        },
-    }
-}
-```
-
-## Pooled with config
-```ignore
-use tiny_actor::*;
-use std::time::Duration;
-use futures::stream::StreamExt;
-
-#[tokio::main]
-async fn main() {
-    let (pool, address) = spawn_many(
-        0..3,
-        Config {
-            link: Link::Attached(Duration::from_secs(1)),
-            capacity: Capacity::Unbounded(BackPressure {
-                start_at: 5,
-                timeout: Duration::from_nanos(25),
-                growth: Growth::Exponential(1.3),
-            }),
-        },
-        |i, mut inbox: Inbox<u32>| async move {
+    let (child, address) = spawn(
+        Config::default(),
+        |mut inbox: Inbox<MyProtocol>| async move {
+            // Constantly loop and receive a message from the inbox
             loop {
                 match inbox.recv().await {
-                    Ok(msg) => println!("Received message on Actor {i}: {msg}"),
+                    Ok(msg) => match msg {
+                        MyProtocol::One(SayHi, ()) => {
+                            println!("Received SayHi message!")
+                        }
+                        MyProtocol::Two(Echo(string), tx) => {
+                            println!("Echoing message: {string}");
+                            let _ = tx.send(string);
+                        }
+                    },
                     Err(error) => match error {
                         RecvError::Halted => {
                             println!("Actor has received halt signal - Exiting now...");
@@ -175,26 +131,33 @@ async fn main() {
         },
     );
 
+    // Send the SayHi message
+    let () = address.send(SayHi).await.unwrap();
+
+    // Send and then receive the Echo message
+    let rx: Rx<String> = address.send(Echo("hi".to_string())).await.unwrap();
+    let _reply: String = rx.await.unwrap();
+
+    // Which can be shortened to:
+    let _reply: String = address.send(Echo("hi".to_string())).recv().await.unwrap();
+
+    // Wait for the message to arrive
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    for num in 0..10 {
-        address.send(num).await.unwrap()
-    }
+    // And halt the actor
+    child.halt();
 
-    pool.halt();
-    let exits = pool.collect::<Vec<_>>().await;
-
-    for exit in exits {
-        match exit {
-            Ok(exit) => {
-                assert_eq!(exit, "Halt");
-                println!("Actor exited with message: {exit}")
-            }
-            Err(error) => match error {
-                ExitError::Panic(_) => todo!(),
-                ExitError::Abort => todo!(),
-            },
+    // Now we can await the child to see how it has exited
+    match child.await {
+        Ok(exit) => {
+            assert_eq!(exit, "Halt");
+            println!("Actor exited with message: {exit}")
         }
+        Err(error) => match error {
+            ExitError::Panic(_) => todo!(),
+            ExitError::Abort => todo!(),
+        },
     }
 }
+
 ```

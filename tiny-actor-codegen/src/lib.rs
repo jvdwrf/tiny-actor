@@ -1,5 +1,15 @@
 use proc_macro::TokenStream as TokenStream1;
 
+/// Derive the `Message` trait.
+/// 
+/// ```ignore
+/// #[derive(Message)]
+/// struct MyCast;
+///
+/// #[derive(Message)]
+/// #[reply(MyReply)]
+/// struct MyCall;
+/// ```
 #[proc_macro_derive(Message, attributes(reply))]
 pub fn derive_message(item: TokenStream1) -> TokenStream1 {
     derive_message::derive_message(item.into())
@@ -65,6 +75,31 @@ mod derive_message {
     }
 }
 
+/// Modifies the enum to add receivers and derives `Protocol`/`Accepts<M>` implementations.
+/// 
+/// # Usage
+/// ```ignore
+/// #[protocol]
+/// enum MyProtocol {
+///     MessageOne(OneOffMsg),
+///     MessageTwo(ReplyMsg)
+/// }
+/// ```
+/// 
+/// This creates the following struct:
+/// ```ignore
+/// enum MyProtocol {
+///     MessageOne(OneOffMsg, ()),
+///     MessageTwo(ReplyMsg, Tx<MyReply>)
+/// }
+/// ```
+/// 
+/// And also generates the following implementations:
+/// ```ignore
+/// impl Protocol for MyProtocol { ... }
+/// impl Accepts<OneOffMsg> for MyProtocol { ... }
+/// impl Accepts<ReplyMsg> for MyProtocol { ... }
+/// ```
 #[proc_macro_attribute]
 pub fn protocol(attr: TokenStream1, item: TokenStream1) -> TokenStream1 {
     protocol::protocol(attr.into(), item.into())
@@ -111,6 +146,16 @@ mod protocol {
                     ) -> Self {
                         Self::#variant_ident(msg, tx)
                     }
+
+                    fn try_into_msg(self) -> Result<
+                        (#variant_ty, <<#variant_ty as tiny_actor::Message>::Returns as tiny_actor::Receiver>::Sender),
+                        Self
+                    > {
+                        match self {
+                            Self::#variant_ident(msg, tx) => Ok((msg, tx)),
+                            prot => Err(prot)
+                        }
+                    }
                 }
             }
         }).collect::<Vec<_>>();
@@ -145,6 +190,15 @@ mod protocol {
             }
         }).collect::<Vec<_>>();
 
+        let matches = variants.iter().map(|variant| {
+            let variant_ident = &variant.ident;
+            quote! {
+                Self::#variant_ident(msg, tx) => {
+                    tiny_actor::BoxedMessage::new(msg, tx)
+                }
+            }
+        }).collect::<Vec<_>>();
+
         Ok(quote! {
             impl #impl_generics tiny_actor::Protocol for #ident #ty_generics #where_clause {
 
@@ -156,6 +210,12 @@ mod protocol {
                 fn accepts(msg_type_id: &core::any::TypeId) -> bool {
                     #(#accepts)*
                     false
+                }
+
+                fn into_boxed(self) -> tiny_actor::BoxedMessage {
+                    match self {
+                        #(#matches)*
+                    }
                 }
 
             }

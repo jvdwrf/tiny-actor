@@ -25,14 +25,14 @@ use std::sync::Arc;
 pub fn spawn<P, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (Child<E, Actor<P>>, Address<Actor<P>>)
+) -> (Child<E, Channel<P>>, Address<Channel<P>>)
 where
     Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
     P: Protocol + Send + 'static,
 {
-    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
+    let channel = Arc::new(Channel::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -62,14 +62,14 @@ where
 pub fn spawn_one<P, E, Fun, Fut>(
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Actor<P>>, Address<Actor<P>>)
+) -> (ChildPool<E, Channel<P>>, Address<Channel<P>>)
 where
     Fun: FnOnce(Inbox<P>) -> Fut + Send + 'static,
     Fut: Future<Output = E> + Send + 'static,
     E: Send + 'static,
     P: Protocol + Send + 'static,
 {
-    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
+    let channel = Arc::new(Channel::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
     let inbox = Inbox::from_channel(channel.clone());
 
@@ -104,7 +104,7 @@ pub fn spawn_many<P, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
-) -> (ChildPool<E, Actor<P>>, Address<Actor<P>>)
+) -> (ChildPool<E, Channel<P>>, Address<Channel<P>>)
 where
     Fun: FnOnce(I, Inbox<P>) -> Fut + Send + 'static + Clone,
     Fut: Future<Output = E> + Send + 'static,
@@ -113,7 +113,7 @@ where
     I: Send + 'static,
 {
     let iter = iter.into_iter();
-    let channel = Arc::new(Actor::<P>::new(1, 1, config.capacity));
+    let channel = Arc::new(Channel::<P>::new(1, 1, config.capacity));
     let address = Address::from_channel(channel.clone());
 
     let handles = iter

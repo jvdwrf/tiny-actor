@@ -1,11 +1,11 @@
 use event_listener::EventListener;
-use std::{any::Any, fmt::Debug, sync::Arc};
+use std::{any::{Any, TypeId}, fmt::Debug, sync::Arc};
 
 use crate::*;
 
 /// An [Actor]-trait, without information about it's message type. Therefore, it's impossible
 /// to send or receive messages through this.
-pub trait DynActor {
+pub trait DynChannel {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
     fn halt(&self);
@@ -19,13 +19,15 @@ pub trait DynActor {
     fn remove_address(&self);
     fn get_exit_listener(&self) -> EventListener;
     fn actor_id(&self) -> u64;
+    fn send_now_boxed(&self, msg: BoxedMessage) -> Result<(), TryDynSendError<BoxedMessage>>;
+    fn accepts(&self, msg_type_id: &TypeId) -> bool;
 }
 
-pub trait AnyActor: DynActor + Debug + Send + Sync + 'static {
+pub trait AnyChannel: DynChannel + Debug + Send + Sync + 'static {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
-impl<M> DynActor for Actor<M> {
+impl<P: Protocol> DynChannel for Channel<P> {
     fn close(&self) -> bool {
         self.close()
     }
@@ -65,9 +67,15 @@ impl<M> DynActor for Actor<M> {
     fn actor_id(&self) -> u64 {
         self.actor_id()
     }
+    fn send_now_boxed(&self, boxed: BoxedMessage) -> Result<(), TryDynSendError<BoxedMessage>> {
+        self.send_now_boxed(boxed)
+    }
+    fn accepts(&self, msg_type_id: &TypeId) -> bool {
+        self.accepts(msg_type_id)
+    }
 }
 
-impl<M: Send + 'static> AnyActor for Actor<M> {
+impl<P: Protocol + Send + 'static> AnyChannel for Channel<P> {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }

@@ -7,10 +7,10 @@ use std::{
     sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
 };
 
-mod actor_traits;
+mod channel_traits;
 mod receiving;
 mod sending;
-pub use {actor_traits::*, receiving::*, sending::*};
+pub use {channel_traits::*, receiving::*, sending::*};
 
 static ACTOR_ID_COUNTER: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 fn next_actor_id() -> u64 {
@@ -19,9 +19,9 @@ fn next_actor_id() -> u64 {
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 /// This is wrapped in an Arc to allow sharing between them.
-pub struct Actor<M> {
+pub struct Channel<P> {
     /// The underlying queue
-    queue: ConcurrentQueue<M>,
+    queue: ConcurrentQueue<P>,
     /// The capacity of the channel
     capacity: Capacity,
     /// The amount of addresses associated to this channel.
@@ -44,7 +44,7 @@ pub struct Actor<M> {
     actor_id: u64,
 }
 
-impl<M> Actor<M> {
+impl<M> Channel<M> {
     /// Create a new channel, given an address count, inbox_count and capacity.
     ///
     /// After this, it must be ensured that the correct amount of inboxes and addresses actually exist.
@@ -302,7 +302,7 @@ impl<M> Actor<M> {
     }
 }
 
-impl<M> Debug for Actor<M> {
+impl<M> Debug for Channel<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Actor")
             .field("queue", &self.queue)
@@ -318,7 +318,7 @@ impl<M> Debug for Actor<M> {
 mod test {
     use std::sync::Arc;
 
-    use super::{next_actor_id, Actor};
+    use super::{next_actor_id, Channel};
     use crate::*;
     use concurrent_queue::PushError;
     use event_listener::EventListener;
@@ -333,23 +333,23 @@ mod test {
 
     #[test]
     fn channel_actor_ids() {
-        let id1 = Actor::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
-        let id2 = Actor::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        let id1 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        let id2 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
         assert!(id1 < id2);
     }
 
     #[test]
     fn capacity_types() {
-        let channel = Actor::<()>::new(1, 1, Capacity::Bounded(10));
+        let channel = Channel::<()>::new(1, 1, Capacity::Bounded(10));
         assert!(channel.queue.capacity().is_some());
 
-        let channel = Actor::<()>::new(1, 1, Capacity::Unbounded(BackPressure::default()));
+        let channel = Channel::<()>::new(1, 1, Capacity::Unbounded(BackPressure::default()));
         assert!(channel.queue.capacity().is_none());
     }
 
     #[test]
     fn closing() {
-        let channel = Actor::<()>::new(1, 1, Capacity::default());
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
         channel.close();
@@ -367,7 +367,7 @@ mod test {
 
     #[test]
     fn no_more_senders_remaining() {
-        let channel = Actor::<()>::new(1, 1, Capacity::default());
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
         channel.remove_address();
@@ -387,7 +387,7 @@ mod test {
 
     #[test]
     fn exiting() {
-        let channel = Actor::<()>::new(1, 1, Capacity::default());
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
         channel.remove_inbox();
@@ -407,7 +407,7 @@ mod test {
 
     #[test]
     fn exiting_drops_all_messages() {
-        let channel = Actor::<Arc<()>>::new(1, 1, Capacity::default());
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         let msg = Arc::new(());
         channel.push_msg(msg.clone()).unwrap();
         assert_eq!(Arc::strong_count(&msg), 2);
@@ -417,7 +417,7 @@ mod test {
 
     #[test]
     fn closing_doesnt_drop_messages() {
-        let channel = Actor::<Arc<()>>::new(1, 1, Capacity::default());
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         let msg = Arc::new(());
         channel.push_msg(msg.clone()).unwrap();
         assert_eq!(Arc::strong_count(&msg), 2);
@@ -427,7 +427,7 @@ mod test {
 
     #[test]
     fn try_add_inbox_with_0_receivers() {
-        let channel = Actor::<Arc<()>>::new(1, 1, Capacity::default());
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         assert_eq!(channel.try_add_inbox(), Err(()));
         assert_eq!(channel.inbox_count(), 0);
@@ -435,7 +435,7 @@ mod test {
 
     #[test]
     fn add_inbox_with_0_receivers() {
-        let channel = Actor::<Arc<()>>::new(1, 1, Capacity::default());
+        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         matches!(channel.try_add_inbox(), Err(_));
         assert_eq!(channel.inbox_count(), 0);
@@ -443,7 +443,7 @@ mod test {
 
     #[test]
     fn sending_notifies() {
-        let channel = Actor::<()>::new(1, 1, Capacity::default());
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
         channel.push_msg(()).unwrap();
 
@@ -456,7 +456,7 @@ mod test {
 
     #[test]
     fn recveiving_notifies() {
-        let channel = Actor::<()>::new(1, 1, Capacity::default());
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
         channel.push_msg(()).unwrap();
         let listeners = Listeners::size_10(&channel);
         channel.take_next_msg().unwrap();
@@ -481,7 +481,7 @@ mod test {
     }
 
     impl Listeners {
-        fn size_10<T>(channel: &Actor<T>) -> Self {
+        fn size_10<T>(channel: &Channel<T>) -> Self {
             Self {
                 recv: (0..10)
                     .into_iter()
@@ -530,7 +530,7 @@ mod test {
 
 #[cfg(bench)]
 mod bench {
-    use super::Actor;
+    use super::Channel;
     use crate::*;
     use concurrent_queue::ConcurrentQueue;
     use futures::future::{pending, ready};
@@ -559,7 +559,7 @@ mod bench {
     async fn bench_channel() {
         let time = Instant::now();
         for handle in 0..1000_000 {
-            let channel = Arc::new(Actor::<()>::new(1, 1, Capacity::default()));
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
         }
         println!("{} us", time.elapsed().as_micros());
     }
@@ -570,10 +570,10 @@ mod bench {
         let handles = used_handles(0..1000_000).await;
         let time = Instant::now();
         for handle in handles {
-            let channel = Arc::new(Actor::<()>::new(1, 1, Capacity::default()));
-            let address = Address::from_channel(actor.clone());
-            let child = Child::new(actor.clone(), handle, Link::default());
-            let inbox = Inbox::from_channel(actor);
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+            let address = Address::from_channel(channel.clone());
+            let child = Child::new(channel.clone(), handle, Link::default());
+            let inbox = Inbox::from_channel(channel);
         }
         println!("{} us", time.elapsed().as_micros());
     }
@@ -584,7 +584,7 @@ mod bench {
         let time = Instant::now();
         for _ in 0..1000_000 {
             let handle = tokio::task::spawn(pending::<()>());
-            let channel = Actor::<()>::new(1, 1, Capacity::default());
+            let channel = Channel::<()>::new(1, 1, Capacity::default());
         }
         println!("{} us", time.elapsed().as_micros());
     }
@@ -594,14 +594,14 @@ mod bench {
     async fn bench_tokio_and_move_channel() {
         let time = Instant::now();
         for _ in 0..1000_000 {
-            let channel = Arc::new(Actor::<()>::new(1, 1, Capacity::default()));
-            let address = Address::from_channel(actor.clone());
-            let inbox = Inbox::from_channel(actor.clone());
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+            let address = Address::from_channel(channel.clone());
+            let inbox = Inbox::from_channel(channel.clone());
             let handle = tokio::task::spawn(async move {
                 pending::<()>().await;
                 drop(inbox);
             });
-            let child = Child::new(actor, handle, Link::default());
+            let child = Child::new(channel, handle, Link::default());
         }
         println!("{} us", time.elapsed().as_micros());
     }

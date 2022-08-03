@@ -61,7 +61,7 @@ macro_rules! send_methods {
         /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [send_now](Address::send_now).
-        pub fn try_send<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+        pub fn try_send<M>(&self, msg: M) -> Result<M::Returns, TrySendError<M>>
         where
             P: Accepts<M>,
             M: Message,
@@ -75,7 +75,7 @@ macro_rules! send_methods {
         /// In the case of a `bounded` [Actor], when it is full, this method will fail.
         ///
         /// For `bounded` channels, this method is the same as [try_send](Address::send_now).
-        pub fn send_now<M>(&self, msg: M) -> Result<M::Returns, TrySendError<P>>
+        pub fn send_now<M>(&self, msg: M) -> Result<M::Returns, TrySendError<M>>
         where
             P: Accepts<M>,
             M: Message,
@@ -98,7 +98,7 @@ macro_rules! send_methods {
         }
 
         /// Same as [send](Address::send) but it blocking the OS-thread.
-        pub fn send_blocking<M>(&self, msg: M) -> Result<M::Returns, SendError<P>>
+        pub fn send_blocking<M>(&self, msg: M) -> Result<M::Returns, SendError<M>>
         where
             P: Accepts<M>,
             M: Message,

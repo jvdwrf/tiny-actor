@@ -4,10 +4,10 @@ use std::{any::Any, fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::
 use tokio::task::JoinHandle;
 
 #[derive(Debug)]
-pub struct Child<E, A = dyn AnyActor>
+pub struct Child<E, A = dyn AnyChannel>
 where
     E: Send + 'static,
-    A: DynActor + ?Sized,
+    A: DynChannel + ?Sized,
 {
     handle: Option<JoinHandle<E>>,
     channel: Arc<A>,
@@ -18,7 +18,7 @@ where
 impl<E, A> Child<E, A>
 where
     E: Send + 'static,
-    A: DynActor + ?Sized,
+    A: DynChannel + ?Sized,
 {
     pub(crate) fn new(channel: Arc<A>, join_handle: JoinHandle<E>, link: Link) -> Self {
         Self {
@@ -85,12 +85,12 @@ where
 impl<E, A> Child<E, A>
 where
     E: Send + 'static,
-    A: AnyActor + ?Sized,
+    A: AnyChannel + ?Sized,
 {
     /// Downcast the `Child<E>` to a `Child<E, Actor<M>>`.
-    pub fn downcast<M: Send + 'static>(self) -> Result<Child<E, Actor<M>>, Self> {
+    pub fn downcast<P: Protocol + Send + 'static>(self) -> Result<Child<E, Channel<P>>, Self> {
         let (channel, handle, link, is_aborted) = self.into_parts();
-        match channel.clone().into_any().downcast::<Actor<M>>() {
+        match channel.clone().into_any().downcast::<Channel<P>>() {
             Ok(channel) => Ok(Child {
                 handle: Some(handle),
                 channel,
@@ -107,10 +107,10 @@ where
     }
 }
 
-impl<E, M> Child<E, Actor<M>>
+impl<E, P> Child<E, Channel<P>>
 where
     E: Send + 'static,
-    M: Send + 'static,
+    P: Protocol + Send + 'static,
 {
     /// Convert the `Child<T, Actor<M>>` into a `Child<T>`
     pub fn into_dyn(self) -> Child<E> {
@@ -124,7 +124,7 @@ where
     }
 }
 
-impl<E: Send + 'static, A: DynActor + ?Sized> Drop for Child<E, A> {
+impl<E: Send + 'static, A: DynChannel + ?Sized> Drop for Child<E, A> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -143,9 +143,9 @@ impl<E: Send + 'static, A: DynActor + ?Sized> Drop for Child<E, A> {
     }
 }
 
-impl<E: Send + 'static, A: DynActor + ?Sized> Unpin for Child<E, A> {}
+impl<E: Send + 'static, A: DynChannel + ?Sized> Unpin for Child<E, A> {}
 
-impl<E: Send + 'static, A: DynActor + ?Sized> Future for Child<E, A> {
+impl<E: Send + 'static, A: DynChannel + ?Sized> Future for Child<E, A> {
     type Output = Result<E, ExitError>;
 
     fn poll(
@@ -165,10 +165,10 @@ impl<E: Send + 'static, A: DynActor + ?Sized> Future for Child<E, A> {
 //------------------------------------------------------------------------------------------------
 
 #[derive(Debug)]
-pub struct ChildPool<E, A = dyn AnyActor>
+pub struct ChildPool<E, A = dyn AnyChannel>
 where
     E: Send + 'static,
-    A: DynActor + ?Sized,
+    A: DynChannel + ?Sized,
 {
     channel: Arc<A>,
     handles: Option<Vec<JoinHandle<E>>>,
@@ -179,7 +179,7 @@ where
 impl<E, A> ChildPool<E, A>
 where
     E: Send + 'static,
-    A: DynActor + ?Sized,
+    A: DynChannel + ?Sized,
 {
     pub(crate) fn new(channel: Arc<A>, handles: Vec<JoinHandle<E>>, link: Link) -> Self {
         Self {
@@ -275,7 +275,7 @@ where
 impl<E, A> ChildPool<E, A>
 where
     E: Send + 'static,
-    A: AnyActor + ?Sized,
+    A: AnyChannel + ?Sized,
 {
     /// Attempt to spawn an additional process onto the [Actor].
     ///
@@ -289,7 +289,7 @@ where
         P: Protocol + Send + 'static,
         E: Send + 'static,
     {
-        let channel = match Arc::downcast::<Actor<P>>(self.channel.clone().into_any()) {
+        let channel = match Arc::downcast::<Channel<P>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
             Err(_) => return Err(TrySpawnError::Exited(fun)),
         };
@@ -306,9 +306,9 @@ where
     }
 
     /// Downcast the `ChildPool<E>` to a `ChildPool<E, Actor<M>>`
-    pub fn downcast<M: Send + 'static>(self) -> Result<ChildPool<E, Actor<M>>, Self> {
+    pub fn downcast<P: Protocol + Send + 'static>(self) -> Result<ChildPool<E, Channel<P>>, Self> {
         let (channel, handles, link, is_aborted) = self.into_parts();
-        match channel.clone().into_any().downcast::<Actor<M>>() {
+        match channel.clone().into_any().downcast::<Channel<P>>() {
             Ok(channel) => Ok(ChildPool {
                 handles: Some(handles),
                 channel,
@@ -325,7 +325,7 @@ where
     }
 }
 
-impl<E: Send + 'static, P: Send + 'static> ChildPool<E, Actor<P>> {
+impl<E: Send + 'static, P: Protocol + Send + 'static> ChildPool<E, Channel<P>> {
     /// Convert the `ChildPool<E, Actor<M>` into a `ChildPool<E>`.
     pub fn into_dyn(self) -> ChildPool<E> {
         let parts = self.into_parts();
@@ -361,7 +361,7 @@ impl<E: Send + 'static, P: Send + 'static> ChildPool<E, Actor<P>> {
     }
 }
 
-impl<E: Send + 'static, A: DynActor + ?Sized> Stream for ChildPool<E, A> {
+impl<E: Send + 'static, A: DynChannel + ?Sized> Stream for ChildPool<E, A> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(
@@ -383,7 +383,7 @@ impl<E: Send + 'static, A: DynActor + ?Sized> Stream for ChildPool<E, A> {
     }
 }
 
-impl<E: Send + 'static, A: DynActor + ?Sized> Drop for ChildPool<E, A> {
+impl<E: Send + 'static, A: DynChannel + ?Sized> Drop for ChildPool<E, A> {
     fn drop(&mut self) {
         if let Link::Attached(abort_timer) = self.link {
             if !self.is_aborted && !self.is_finished() {
@@ -485,15 +485,15 @@ impl<T> Debug for SpawnError<T> {
 mod test {
     use std::time::Duration;
 
-    use crate::{test_helper::*, *};
+    use crate::{test::*, *};
 
     #[tokio::test]
     async fn downcast_child() {
         let (child, _addr) = spawn(Config::default(), test_loop!());
-        matches!(child.into_dyn().downcast::<()>(), Ok(_));
+        matches!(child.into_dyn().downcast::<TestProt1>(), Ok(_));
 
         let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!());
-        matches!(pool.into_dyn().downcast::<()>(), Ok(_));
+        matches!(pool.into_dyn().downcast::<TestProt1>(), Ok(_));
     }
 
     #[tokio::test]
@@ -501,7 +501,7 @@ mod test {
         let (child, _addr) = spawn_one(Config::default(), test_loop!());
         tokio::time::sleep(Duration::from_millis(1)).await;
         let mut child = child.into_dyn();
-        child.try_spawn(test_helper::test_loop!()).unwrap();
+        child.try_spawn(test::test_loop!()).unwrap();
         assert_eq!(child.inbox_count(), 2);
     }
 

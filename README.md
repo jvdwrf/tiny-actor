@@ -76,7 +76,7 @@ An `Actor` can either be bounded or unbounded. A bounded `Actor` can receive mes
 
 The following is a basic example to help get started, for more complex examples, look at the `./examples` folder.
 
-```rust
+```ignore
 use std::time::Duration;
 use tiny_actor::*;
 

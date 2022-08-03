@@ -60,7 +60,7 @@ async fn main() {
     let _reply: String = rx.await.unwrap();
 
     // Which can be shortened to:
-    let _reply: String = address.send(Echo("hi".to_string())).recv().await.unwrap();
+    let _reply: String = address.send(Echo("hi".to_string())).into_recv().await.unwrap();
 
     // Wait for the message to arrive
     tokio::time::sleep(Duration::from_millis(10)).await;

@@ -1,7 +1,5 @@
 //! Module containing the [Channel], and [DynChannel] and [AnyChannel] traits. In
 //! general these are never used directly, but just part of an [Address] or [Child].
-//!
-//!
 
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
@@ -153,7 +151,7 @@ impl<M> Channel<M> {
         // If previous count was 1, then we can close the channel
         if prev_address_count == 1 {
             // This notifies senders and receivers
-            self.close();
+            // self.close();
         }
     }
 
@@ -370,22 +368,21 @@ mod test {
     }
 
     #[test]
-    fn no_more_senders_remaining() {
+    fn no_more_senders_remaining_doesnt_close() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
         channel.remove_address();
 
-        assert!(channel.is_closed());
+        assert!(!channel.is_closed());
         assert!(!channel.has_exited());
         assert_eq!(channel.address_count(), 0);
         assert_eq!(channel.inbox_count(), 1);
-        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
-        assert_eq!(channel.take_next_msg(), Err(()));
+        assert_eq!(channel.push_msg(()), Ok(()));
         listeners.assert_notified(Assert {
-            recv: 10,
+            recv: 1,
             exit: 0,
-            send: 10,
+            send: 0,
         });
     }
 

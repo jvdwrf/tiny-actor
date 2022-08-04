@@ -4,33 +4,32 @@ use concurrent_queue::PushError;
 use std::any::Any;
 use thiserror::Error;
 
-/// This Inbox has been halted.
+/// Error returned when `Stream`ing an [Inbox].
+///
+/// Process has been halted and should now exit.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 #[error("Process has been halted")]
 pub struct HaltedError;
 
 /// Error returned when receiving a message from an inbox.
-/// Reasons can be:
-/// * `Halted`: This Inbox has been halted and should now exit.
-/// * `ClosedAndEmpty`: This Inbox is closed and empty, it can no longer receive new messages.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 pub enum RecvError {
-    /// This inbox has been halted and should now exit.
-    #[error("Process has been halted")]
+    /// Process has been halted and should now exit.
+    #[error("Couldn't receive because the process has been halted")]
     Halted,
-    /// This inbox has been closed, and contains no more messages. It was closed either because
-    /// all addresses have been dropped, or because it was manually closed.
-    #[error("Channel is closed and empty")]
+    /// Channel has been closed, and contains no more messages. It is impossible for new
+    /// messages to be sent to the channel.
+    #[error("Couldn't receive becuase the channel is closed and empty")]
     ClosedAndEmpty,
 }
 
-/// An error returned when trying to send a message into a `Channel`, but not waiting for space.
-///
-/// This can be either because the `Channel` is closed, or because it is full.
+/// An error returned when trying to send a message into a channel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 pub enum TrySendError<M> {
+    /// The channel has been closed, and no longer accepts new messages.
     #[error("Couldn't send message because Channel is closed")]
     Closed(M),
+    /// The channel is full.
     #[error("Couldn't send message because Channel is full")]
     Full(M),
 }
@@ -44,15 +43,19 @@ impl<M> From<PushError<M>> for TrySendError<M> {
     }
 }
 
-/// An error returned when sending a message into a `Channel` because the `Channel` is closed.
+/// Error returned when sending a message into a channel.
+///
+/// The channel has been closed, and no longer accepts new messages.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 pub struct SendError<M>(pub M);
 
-/// An error returned when trying to spawn more processes onto a [Channel].
+/// An error returned when trying to spawn more processes onto a channel
 #[derive(Clone, PartialEq, Eq, Hash, Error)]
 pub enum TrySpawnError<T> {
-    #[error("Couldn't spawn process because the channel has exited")]
+    /// The actor has exited.
+    #[error("Couldn't spawn process because the actor has exited")]
     Exited(T),
+    /// The spawned inbox does not have the correct type
     #[error("Couldn't spawn process because the given inbox-type is incorrect")]
     IncorrectType(T),
 }
@@ -66,9 +69,9 @@ impl<T> std::fmt::Debug for TrySpawnError<T> {
     }
 }
 
-/// An error returned when spawning more processes onto a [Channel].
+/// An error returned when spawning more processes onto a channel.
 ///
-/// This can only happen if the [Channel] has already exited.
+/// The actor has exited.
 #[derive(Clone, PartialEq, Eq, Hash, Error)]
 #[error("Couldn't spawn process because the channel has exited")]
 pub struct SpawnError<T>(pub T);
@@ -79,13 +82,13 @@ impl<T> std::fmt::Debug for SpawnError<T> {
     }
 }
 
-/// An error returned from an exiting task.
-///
-/// Can be either because it has panicked, or because it was aborted.
+/// An error returned from an exiting process.
 #[derive(Debug, Error)]
 pub enum ExitError {
+    /// Process panicked.
     #[error("Process has exited because of a panic")]
     Panic(Box<dyn Any + Send>),
+    /// Process  was aborted.
     #[error("Process has exited because it was aborted")]
     Abort,
 }

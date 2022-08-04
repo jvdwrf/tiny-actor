@@ -2,12 +2,8 @@ use crate::*;
 use futures::Future;
 use std::sync::Arc;
 
-/// Spawn a new `Actor` with a single `Process`. This will return a [Child] and
-/// and [Address]. The `Process` is spawned with a single [Inbox].
-///
-/// This will immeadeately start the spawning. `await`-ing the [Spawn]-future will
-/// wait until the [Channel] is fully initialized.
-///
+/// Spawn a new actor with a single process, this returns a [Child] and an [Address].
+/// 
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
@@ -43,7 +39,9 @@ where
     (child, address)
 }
 
-/// Same as [spawn], but returns a [ChildPool] instead of a [Child].
+/// Spawn a new actor with a single process, this returns a [Child] and an [Address].
+/// 
+/// This is the same as [spawn], but returns a [ChildPool] instead of a [Child].
 ///
 /// # Example
 /// ```no_run
@@ -80,11 +78,9 @@ where
     (child, address)
 }
 
-/// Spawn a new `Actor` with a multiple `Process`es. This will return a [ChildPool] and
-/// and [Address]. The `Process`es are spawned with [Inbox]es.
-///
-/// The amount of `Process`es that are spawned is equal to the length of the iterator.
-/// Every process get's access to a single item within the iterator as it's first argument.
+/// Spawn a new actor with a multiple process, this returns a [ChildPool] and an [Address].
+/// 
+/// The iterator will be passed along as the first argument to every spawned function.
 ///
 /// # Example
 /// ```no_run

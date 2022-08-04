@@ -3,6 +3,7 @@ use event_listener as el;
 use futures::Stream;
 use std::{fmt::Debug, sync::Arc};
 
+/// An inbox, used to receive messages from a channel.
 #[derive(Debug)]
 pub struct Inbox<M> {
     // The underlying channel
@@ -23,16 +24,22 @@ impl<M> Inbox<M> {
         }
     }
 
-    /// This will attempt to receive a message from the [Inbox]. If there is no message, this
-    /// will return `None`.
+    /// Attempt to receive a message from the [Inbox]. If there is no message, this
+    /// returns `None`.
     pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
         self.channel.try_recv(&mut self.signaled_halt)
     }
 
-    /// Wait until there is a message in the [Inbox].
+    /// Wait until there is a message in the [Inbox], or until the channel is closed.
     pub fn recv(&mut self) -> Rcv<'_, M> {
         self.channel
             .recv(&mut self.signaled_halt, &mut self.listener)
+    }
+
+    /// Get a new [Address] to the [Channel].
+    pub fn get_address(&self) -> Address<Channel<M>> {
+        self.channel.add_address();
+        Address::from_channel(self.channel.clone())
     }
 
     gen::send_methods!();

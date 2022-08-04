@@ -79,7 +79,7 @@ async fn base_counts() {
         drop(inbox);
     });
     assert_eq!(child.address_count(), 1);
-    assert_eq!(child.inbox_count(), 1);
+    assert_eq!(child.process_count(), 1);
     assert_eq!(address.msg_count(), 0);
     child.abort();
 }
@@ -108,25 +108,25 @@ async fn inbox_counts() {
         },
     );
     let mut pool = pool.into_dyn();
-    assert_eq!(pool.inbox_count(), 4);
+    assert_eq!(pool.process_count(), 4);
 
     pool.halt_some(1);
     tokio::time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(pool.inbox_count(), 3);
+    assert_eq!(pool.process_count(), 3);
 
     pool.try_spawn(|mut inbox: Inbox<()>| async move {
         inbox.recv().await.unwrap_err();
     })
     .unwrap();
-    assert_eq!(pool.inbox_count(), 4);
+    assert_eq!(pool.process_count(), 4);
 
     pool.halt_some(2);
     tokio::time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(pool.inbox_count(), 2);
+    assert_eq!(pool.process_count(), 2);
 
     pool.halt();
     tokio::time::sleep(Duration::from_millis(10)).await;
-    assert_eq!(pool.inbox_count(), 0);
+    assert_eq!(pool.process_count(), 0);
 }
 
 #[tokio::test]

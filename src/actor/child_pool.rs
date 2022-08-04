@@ -3,6 +3,15 @@ use futures::{Future, FutureExt, Stream};
 use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, sync::Arc, task::Poll, time::Duration};
 use tokio::{task::JoinHandle, time::Sleep};
 
+/// A child-pool is the non clone-able reference to an actor with a multiple processes.
+///
+/// child-pools can be of two forms:
+/// * `ChildPool<E, Channel<M>>`: This is the default form, it can be transformed into a `ChildPool<E>` using
+/// [ChildPool::into_dyn]. Additional processes can be spawned using [ChildPool::spawn].
+/// * `ChildPool<E>`: This form is a dynamic child-pool, it can be transformed back into a `ChildPool<E, Channel<M>>`
+/// using [ChildPool::downcast::<M>]. Additional processes can be spawned using [ChildPool::try_spawn].
+///
+/// A child-pool can be streamed which returns values of `E` when the processes exit.
 #[derive(Debug)]
 pub struct ChildPool<E, C = dyn AnyChannel>
 where
@@ -29,9 +38,6 @@ where
         }
     }
 
-    /// Split the child into it's parts.
-    ///
-    /// This will not run the destructor, and therefore the child will not be notified.
     fn into_parts(self) -> (Arc<C>, Vec<JoinHandle<E>>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
@@ -46,8 +52,7 @@ where
     /// Get the underlying [JoinHandles](JoinHandle). The order does not necessarily reflect
     /// the order in which processes were spawned.
     ///
-    /// This will not run the drop-implementation, and therefore the `Actor` will not
-    /// be halted/aborted.
+    /// This will not run drop, and therefore the `Actor` will not be halted/aborted.
     pub fn into_tokio_joinhandles(self) -> Vec<JoinHandle<E>> {
         self.into_parts().1
     }
@@ -65,7 +70,7 @@ where
         !was_aborted
     }
 
-    /// Whether all tasks have exited.
+    /// Whether all tasks have finished.
     pub fn is_finished(&self) -> bool {
         self.handles
             .as_ref()
@@ -74,7 +79,10 @@ where
             .all(|handle| handle.is_finished())
     }
 
-    /// The amount of tasks that are alive
+    /// The amount of tasks that are alive.
+    ///
+    /// This should give the same result as [ChildPool::process_count], as long as
+    /// an inbox is only dropped whenever it's task finishes.
     pub fn task_count(&self) -> usize {
         self.handles
             .as_ref()
@@ -85,33 +93,17 @@ where
             .len()
     }
 
-    /// The amount of `Children` in this `ChildPool`, this includes both alive and
-    /// dead processes.
-    pub fn child_count(&self) -> usize {
+    /// The amount of handles to processes that this pool contains. This can be bigger
+    /// than the `process_count` or `task_count` if processes have exited.
+    pub fn handle_count(&self) -> usize {
         self.handles.as_ref().unwrap().len()
     }
 
-    /// Convert the [ChildPool] into a [Child]. Succeeds if there is exactly one child in the
-    /// pool.
-    pub fn try_into_child(self) -> Result<Child<E, C>, Self> {
-        if self.handles.as_ref().unwrap().len() == 1 {
-            let (channel, mut handles, link, is_aborted) = self.into_parts();
-            Ok(Child {
-                channel,
-                handle: Some(handles.pop().unwrap()),
-                link,
-                is_aborted,
-            })
-        } else {
-            Err(self)
-        }
-    }
-
-    /// Attempt to spawn an additional process onto the [Channel].
+    /// Attempt to spawn an additional process on the channel.
     ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the [Channel].
-    /// * The [Channel] has already exited.
+    /// This method can fail if
+    /// * the message-type does not match that of the channel.
+    /// * the channel has already exited.
     pub fn try_spawn<M, Fun, Fut>(&mut self, fun: Fun) -> Result<(), TrySpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -160,10 +152,11 @@ where
     }
 
     /// Halts the actor, and then waits for it to exit.
+    /// todo
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub fn shutdown(self, timer: Duration) -> ShutdownPool<E, C> {
-        ShutdownPool {
+    pub fn shutdown(self, timer: Duration) -> ShutdownPoolFut<E, C> {
+        ShutdownPoolFut {
             sleep: Some(Box::pin(tokio::time::sleep(timer))),
             child_pool: self,
             exits: Some(Vec::new()),
@@ -192,11 +185,9 @@ where
         }
     }
 
-    /// Attempt to spawn an additional process on to this [Channel].
+    /// Attempt to spawn an additional process on the channel.
     ///
-    /// This method can fail for 2 reasons:
-    /// * The [Inbox]-type does not match that of the [Channel].
-    /// * The [Channel] has already exited.
+    /// This method fails if the channel has already exited.
     pub fn spawn<Fun, Fut>(&mut self, fun: Fun) -> Result<(), SpawnError<Fun>>
     where
         Fun: FnOnce(Inbox<M>) -> Fut + Send + 'static,
@@ -283,19 +274,15 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     }
 }
 
-//------------------------------------------------------------------------------------------------
-//  ShutdownPool
-//------------------------------------------------------------------------------------------------
-
 #[derive(Debug)]
-pub struct ShutdownPool<E: Send + 'static, C: DynChannel + ?Sized> {
+pub struct ShutdownPoolFut<E: Send + 'static, C: DynChannel + ?Sized> {
     sleep: Option<Pin<Box<Sleep>>>,
     child_pool: ChildPool<E, C>,
     exits: Option<Vec<Result<E, ExitError>>>,
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownPool<E, C> {}
-impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPool<E, C> {
+impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownPoolFut<E, C> {}
+impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPoolFut<E, C> {
     type Output = Vec<Result<E, ExitError>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
@@ -326,7 +313,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPool<E, C> {
             mut_self.child_pool.handles.as_mut().unwrap().swap_remove(i);
         }
 
-        if mut_self.child_pool.child_count() == 0 {
+        if mut_self.child_pool.handle_count() == 0 {
             Poll::Ready(self.exits.take().unwrap())
         } else {
             if let Some(sleep) = &mut self.sleep {

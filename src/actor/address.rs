@@ -9,6 +9,16 @@ use std::{
     task::{Context, Poll},
 };
 
+/// An address is a reference to the actor, used to send messages. 
+/// 
+/// Addresses can be of two forms:
+/// * `Address<Channel<M>>`: This is the default form, which can be used to send messages of
+/// type `M`. It can be transformed into an `Address` using [Address::into_dyn].
+/// * `Address`: This form is a dynamic address, which can do everything a normal address can
+/// do, except for sending messages. It can be transformed back into an `Address<Channel<M>>` using
+/// [Address::downcast::<M>].
+/// 
+/// An address can be awaited which returns once the actor exits.
 #[derive(Debug)]
 pub struct Address<C = dyn AnyChannel>
 where
@@ -41,12 +51,6 @@ where
             let exit_listener = std::ptr::read(&no_drop.exit_listener);
             (channel, exit_listener)
         }
-    }
-
-    /// Get a new [Address] to the [Channel].
-    pub fn get_address(&self) -> Address<C> {
-        self.channel.add_address();
-        Address::from_channel(self.channel.clone())
     }
 
     /// Attempt to the downcast the `Address` into an `Address<Channel<M>>`.

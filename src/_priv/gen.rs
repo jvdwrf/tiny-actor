@@ -5,7 +5,7 @@ macro_rules! dyn_channel_methods {
             self.channel.close()
         }
 
-        /// Halt all processes.
+        /// Halt the actor.
         pub fn halt(&self) {
             self.channel.halt_some(u32::MAX)
         }
@@ -15,8 +15,8 @@ macro_rules! dyn_channel_methods {
             self.channel.halt_some(n)
         }
 
-        /// Get the amount of [Inboxes](Inbox).
-        pub fn inbox_count(&self) -> usize {
+        /// Get the amount of processes.
+        pub fn process_count(&self) -> usize {
             self.channel.inbox_count()
         }
 
@@ -35,17 +35,17 @@ macro_rules! dyn_channel_methods {
             self.channel.is_closed()
         }
 
-        /// Get the [Capacity] of the [Channel]. This cannot be changed.
+        /// Get the [Capacity] of the [Channel].
         pub fn capacity(&self) -> &Capacity {
             self.channel.capacity()
         }
 
-        /// Whether all [Inboxes](Inbox) have been dropped.
+        /// Whether all processes have exited.
         pub fn has_exited(&self) -> bool {
             self.channel.has_exited()
         }
 
-        /// Get the actor_id of the [Channel].
+        /// Get the actor's id.
         pub fn actor_id(&self) -> u64 {
             self.channel.actor_id()
         }
@@ -55,7 +55,7 @@ pub(crate) use dyn_channel_methods;
 
 macro_rules! send_methods {
     () => {
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message to the actor.
         ///
         /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will fail.
         /// In the case of a `bounded` [Channel], when it is full, this method will fail.
@@ -65,7 +65,7 @@ macro_rules! send_methods {
             self.channel.try_send(msg)
         }
 
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message to the actor.
         ///
         /// In the case of an `unbounded` [Channel], any [BackPressure] is ignored.
         /// In the case of a `bounded` [Channel], when it is full, this method will fail.
@@ -75,7 +75,7 @@ macro_rules! send_methods {
             self.channel.send_now(msg)
         }
 
-        /// Attempt to send a message into the [Channel].
+        /// Attempt to send a message to the actor.
         ///
         /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will
         /// wait and then send the message.

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use futures::{future::pending, StreamExt};
-use tiny_actor::{spawn, spawn_many, BackPressure, Capacity, Config, Inbox, Link, RecvError};
+use tiny_actor::*;
 
 #[tokio::test]
 async fn spawn_and_abort() {

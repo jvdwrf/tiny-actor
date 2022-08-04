@@ -1,15 +1,24 @@
+//! Module containing the configuration for newly spawned actors. See [Config] for more details.
+
 use std::time::Duration;
 
-//------------------------------------------------------------------------------------------------
-//  Config
-//------------------------------------------------------------------------------------------------
-
-/// The config used for spawning new processes.
+/// The config used for spawning new processes, made up of a [Link] and a [Capacity]. This
+/// decides whether the actor will be attached/detached and unbounded/bounded.
+///
+/// # Example
+/// ```no_run
+/// use tiny_actor::*;
+/// Config {
+///     link: Link::default(),
+///     capacity: Capacity::default(),
+/// };
+/// ```
 ///
 /// # Default
-/// By default, processes are attached with an abort-timer of `1 sec`. The capacity is `unbounded`,
-/// with `exponential` backoff. Backoff starts with `5 messages` in the inbox at `25 ns`, with a
-/// growth-factor of `1.3`.
+/// Attached with an abort-timer of `1 sec`.
+///
+/// The capacity is `unbounded`, with `exponential` backoff starting `5 messages` in the inbox
+/// at `25 ns`, with a growth-factor of `1.3`.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Config {
     pub link: Link,
@@ -21,22 +30,44 @@ impl Config {
         Self { link, capacity }
     }
 
-    /// A default bounded inbox:
-    /// * abort_timer: 1 sec
-    /// * attached: true
-    /// * capacity: Bounded(capacity)
+    /// A config for a default bounded [Channel]:
+    /// ```no_run
+    /// # use tiny_actor::*;
+    /// # let capacity = 1;
+    /// Config {
+    ///     link: Link::default(),
+    ///     capacity: Capacity::Bounded(capacity),
+    /// };
+    /// ```
     pub fn bounded(capacity: usize) -> Self {
         Self {
             link: Link::default(),
             capacity: Capacity::Bounded(capacity),
         }
     }
+
+    /// A default bounded inbox:
+    /// ```no_run
+    /// # use tiny_actor::*;
+    /// # let capacity = 1;
+    /// Config {
+    ///     link: Link::Detached,
+    ///     capacity: Capacity::default(),
+    /// };
+    /// ```
+    pub fn detached() -> Self {
+        Self {
+            link: Link::Detached,
+            capacity: Capacity::default(),
+        }
+    }
 }
 
-//------------------------------------------------------------------------------------------------
-//  Link
-//------------------------------------------------------------------------------------------------
-
+/// This decides whether the actor is attached or detached. If it is attached, then the
+/// abort-timer is specified here as well.
+///
+/// # Default
+/// Attached with an abort-timer of 1 second.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Link {
     Detached,
@@ -50,7 +81,7 @@ impl Default for Link {
 }
 
 impl Link {
-    pub fn attach(&mut self, mut duration: Duration) -> Option<Duration> {
+    pub(crate) fn attach(&mut self, mut duration: Duration) -> Option<Duration> {
         match self {
             Link::Detached => {
                 *self = Link::Attached(duration);
@@ -63,7 +94,7 @@ impl Link {
         }
     }
 
-    pub fn detach(&mut self) -> Option<Duration> {
+    pub(crate) fn detach(&mut self) -> Option<Duration> {
         match self {
             Link::Detached => {
                 *self = Link::Detached;
@@ -81,10 +112,12 @@ impl Link {
     }
 }
 
-//------------------------------------------------------------------------------------------------
-//  Capacity
-//------------------------------------------------------------------------------------------------
-
+/// This decides whether the actor is bounded or unbounded. If it is unbounded,
+/// then a [BackPressure] must be given.
+///
+/// # Default
+/// `unbounded`, with `exponential` backoff starting `5 messages` in the inbox
+/// at `25 ns`, with a growth-factor of `1.3`
 #[derive(Clone, Debug, PartialEq)]
 pub enum Capacity {
     Bounded(usize),
@@ -97,6 +130,13 @@ impl Default for Capacity {
     }
 }
 
+/// This decides how an actor with an unbouned channel handles message overload. This works
+/// by applying a timeout whenever there are more than `start_at` messages in the channel.
+/// The timeout [Growth] is multiplied with the given `timeout`.
+///
+/// # Default
+/// `exponential` backoff starting `5 messages` in the inbox at `25 ns`, with a
+/// growth-factor of `1.3`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackPressure {
     pub start_at: usize,
@@ -115,7 +155,8 @@ impl Default for BackPressure {
 }
 
 impl BackPressure {
-    /// Get a back-pressure configuration that is disabled.
+    /// Get a back-pressure configuration that is disabled. This will never return a timeout,
+    /// no matter how full the channel is.
     pub fn disabled() -> Self {
         Self {
             start_at: usize::MAX,
@@ -147,6 +188,11 @@ impl BackPressure {
     }
 }
 
+/// How the timeout of an unbounded channel should grow, given more messages in the
+/// channel. This can either be linear or exponential.
+///
+/// # Default
+/// The default is `exponential`, with a growth-factor of `1.3`.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Growth {
     /// `timeout = base_timeout * (growth ^ (msg_count - start_at))`

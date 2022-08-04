@@ -9,6 +9,7 @@ The main principle of tiny-actor is merging `Inbox`es with `tasks`: It's impossi
 This library will not be trying out any API's similar to Actix's, Instead I'm planning to build another actor-library that will use tiny-actor under the hood.
 
 # Concepts
+The following gives a quick overview of all concepts. For more detailed information about usage, please refer to the crate [documentation](https://docs.rs/tiny-actor).
 
 ## Channel
 A `Channel` is that which couples `Inboxes`, `Addresses` and `Children` together. Every unique `Channel` contains the following rust-structs: 
@@ -33,10 +34,10 @@ The following diagram shows a visual representation of the naming used:
 ```
 
 ## Actor
-The term `actor` is used to describe (one or more) `processes` sharing a single `Channel`. The `actor` appears to be functioning as a single unit, and the `processes` share an `Address`.
+The term `actor` is used to describe all `processes` of a `Channel`.
 
 ## Process
-The term `process` is used to describe the coupling of an `Inbox` with a `task`. 
+The term `process` is used to describe the a `task` with an `Inbox`. 
 
 ## Inbox
 An `Inbox` is a receiver to the `Channel`, and is primarily used to take messages out of the `Channel`. `Inboxes` can be created by spawning new `processes` and should stay coupled to the `task` they were spawned with: An `Inbox` should only be dropped when the `task` is exiting.
@@ -56,7 +57,7 @@ When a `Channel` is `closed`, it is not longer possible to send new messages int
 A `process` can be `halted` exactly once, by receiving a `RecvError::Halted`. Afterwards the `process` should exit. An `actor` can be partially halted, meaning that only some of the `processeses` have been `halted`.
 
 ## Aborting
-An `actor` can be `aborted` through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tasks` to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`. By default `processes` are automatically `aborted` when the `Child(Pool)` is dropped. This can be prevented by detaching the `Child(Pool)`.
+An `actor` can be `aborted` through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tasks` to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`.
 
 ## Exiting
 An `exit` can refer to two seperate events which, with good practise, always occur at the same time:
@@ -71,21 +72,19 @@ An `actor` can either be `attached` or `detached`, which indicates what should h
 ## Capacity
 A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until it's capacity has been reached. After reaching the capacity, senders must wait until space is available. An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send. 
 
-## Default Config
-* `Attached` with an abort-timer of `1 sec`. 
-* `Unbounded` capacity with BackPressure timeout starting from `5 messages` at `25ns` with an `exponential` growth-factor of `1.3`.
+# Getting started
 
-# Examples
-
-## Basic
+## Basic example
 ```rust
-use tiny_actor::*;
+use tiny_actor::prelude::*;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
+    // First we spawn an actor with a default config, and an inbox which receives u32 messages.
     let (child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
         loop {
+            // This loops and receives messages
             match inbox.recv().await {
                 Ok(msg) => println!("Received message: {msg}"),
                 Err(error) => match error {
@@ -102,13 +101,14 @@ async fn main() {
         }
     });
 
+    // Then we can send it messages
     address.send(10).await.unwrap();
     address.send(5).await.unwrap();
 
     tokio::time::sleep(Duration::from_millis(10));
 
+    // And finally halt the actor for a graceful exit.
     child.halt();
-
     match child.await {
         Ok(exit) => {
             assert_eq!(exit, "Halt");
@@ -122,9 +122,9 @@ async fn main() {
 }
 ```
 
-## Pooled with config
+## Example with ChildPool and custom Config
 ```rust
-use tiny_actor::*;
+use tiny_actor::prelude::*;
 use std::time::Duration;
 use futures::stream::StreamExt;
 

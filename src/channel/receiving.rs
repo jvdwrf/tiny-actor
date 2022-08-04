@@ -104,21 +104,3 @@ impl<'a, M> std::fmt::Debug for Rcv<'a, M> {
             .finish()
     }
 }
-
-/// This Inbox has been halted.
-#[derive(Debug, thiserror::Error)]
-#[error("This inbox has been halted")]
-pub struct Halted;
-
-/// Error returned when receiving a message from an inbox.
-/// Reasons can be:
-/// * `Halted`: This Inbox has been halted and should now exit.
-/// * `ClosedAndEmpty`: This Inbox is closed and empty, it can no longer receive new messages.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum RecvError {
-    /// This inbox has been halted and should now exit.
-    Halted,
-    /// This inbox has been closed, and contains no more messages. It was closed either because
-    /// all addresses have been dropped, or because it was manually closed.
-    ClosedAndEmpty,
-}

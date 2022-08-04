@@ -1,7 +1,11 @@
+//! Module containing the [Channel], and [DynChannel] and [AnyChannel] traits. In
+//! general these are never used directly, but just part of an [Address] or [Child].
+//!
+//!
+
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
-use once_cell::sync::Lazy;
 use std::{
     fmt::Debug,
     sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
@@ -12,9 +16,9 @@ mod receiving;
 mod sending;
 pub use {any_channel::*, receiving::*, sending::*};
 
-static ACTOR_ID_COUNTER: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(0));
 fn next_actor_id() -> u64 {
-    ACTOR_ID_COUNTER.fetch_add(1, Ordering::AcqRel)
+    static ACTOR_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+    ACTOR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.

@@ -43,7 +43,7 @@ impl<M> Inbox<M> {
 // rcv-future, as long as both clean up properly after returning Poll::Ready.
 // (Always remove the event-listener from the Option)
 impl<M> Stream for Inbox<M> {
-    type Item = Result<M, Halted>;
+    type Item = Result<M, HaltedError>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -59,7 +59,7 @@ impl<M> Stream for Inbox<M> {
         .map(|res| match res {
             Ok(msg) => Some(Ok(msg)),
             Err(e) => match e {
-                RecvError::Halted => Some(Err(Halted)),
+                RecvError::Halted => Some(Err(HaltedError)),
                 RecvError::ClosedAndEmpty => None,
             },
         })

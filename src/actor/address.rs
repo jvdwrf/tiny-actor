@@ -102,12 +102,8 @@ where
         }
     }
 
-    pub fn inner_ref(&self) -> (&C, &Option<EventListener>) {
-        (&self.channel, &self.exit_listener)
-    }
-
-    pub fn inner_mut(&mut self) -> (&C, &mut Option<EventListener>) {
-        (&self.channel, &mut self.exit_listener)
+    pub fn channel_ref(&self) -> &C {
+        &self.channel
     }
 }
 

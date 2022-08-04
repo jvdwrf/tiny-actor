@@ -1,12 +1,23 @@
+//! Module containing the [Channel], and [DynChannel] and [AnyChannel] traits. In
+//! general these are never used directly, but just part of an [Address] or [Child].
+
 use crate::*;
 use concurrent_queue::{ConcurrentQueue, PopError, PushError};
 use event_listener::{Event, EventListener};
-use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::{
+    fmt::Debug,
+    sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
+};
 
 mod any_channel;
 mod receiving;
 mod sending;
 pub use {any_channel::*, receiving::*, sending::*};
+
+fn next_actor_id() -> u64 {
+    static ACTOR_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+    ACTOR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 /// This is wrapped in an Arc to allow sharing between them.
@@ -31,6 +42,8 @@ pub struct Channel<M> {
     /// The amount of processes that should still be halted.
     /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
+
+    actor_id: u64,
 }
 
 impl<M> Channel<M> {
@@ -40,7 +53,7 @@ impl<M> Channel<M> {
     pub(crate) fn new(address_count: usize, inbox_count: usize, capacity: Capacity) -> Self {
         Self {
             queue: match &capacity {
-                Capacity::Bounded(size) => ConcurrentQueue::bounded(*size),
+                Capacity::Bounded(size) => ConcurrentQueue::bounded(size.to_owned()),
                 Capacity::Unbounded(_) => ConcurrentQueue::unbounded(),
             },
             capacity,
@@ -50,6 +63,7 @@ impl<M> Channel<M> {
             send_event: Event::new(),
             exit_event: Event::new(),
             halt_count: AtomicI32::new(0),
+            actor_id: next_actor_id(),
         }
     }
 
@@ -137,7 +151,7 @@ impl<M> Channel<M> {
         // If previous count was 1, then we can close the channel
         if prev_address_count == 1 {
             // This notifies senders and receivers
-            self.close();
+            // self.close();
         }
     }
 
@@ -283,16 +297,48 @@ impl<M> Channel<M> {
     pub(crate) fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
     }
+
+    /// Get the actor_id
+    pub(crate) fn actor_id(&self) -> u64 {
+        self.actor_id
+    }
+}
+
+impl<M> Debug for Channel<M> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Channel")
+            .field("queue", &self.queue)
+            .field("capacity", &self.capacity)
+            .field("address_count", &self.address_count)
+            .field("inbox_count", &self.inbox_count)
+            .field("halt_count", &self.halt_count)
+            .finish()
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::Channel;
-    use crate::{BackPressure, Capacity};
+    use std::sync::Arc;
+
+    use super::{next_actor_id, Channel};
+    use crate::*;
     use concurrent_queue::PushError;
     use event_listener::EventListener;
     use futures::FutureExt;
-    use std::sync::Arc;
+
+    #[test]
+    fn actor_ids() {
+        let id1 = next_actor_id();
+        let id2 = next_actor_id();
+        assert!(id1 < id2);
+    }
+
+    #[test]
+    fn channel_actor_ids() {
+        let id1 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        let id2 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
+        assert!(id1 < id2);
+    }
 
     #[test]
     fn capacity_types() {
@@ -322,22 +368,21 @@ mod test {
     }
 
     #[test]
-    fn no_more_senders_remaining() {
+    fn no_more_senders_remaining_doesnt_close() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
         channel.remove_address();
 
-        assert!(channel.is_closed());
+        assert!(!channel.is_closed());
         assert!(!channel.has_exited());
         assert_eq!(channel.address_count(), 0);
         assert_eq!(channel.inbox_count(), 1);
-        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
-        assert_eq!(channel.take_next_msg(), Err(()));
+        assert_eq!(channel.push_msg(()), Ok(()));
         listeners.assert_notified(Assert {
-            recv: 10,
+            recv: 1,
             exit: 0,
-            send: 10,
+            send: 0,
         });
     }
 
@@ -481,5 +526,159 @@ mod test {
             assert_eq!(assert.exit, exit);
             assert_eq!(assert.send, send);
         }
+    }
+}
+
+#[cfg(bench)]
+mod bench {
+    use super::Channel;
+    use crate::*;
+    use concurrent_queue::ConcurrentQueue;
+    use futures::future::{pending, ready};
+    use std::{
+        ops::Range,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc,
+        },
+    };
+    use tokio::{sync::mpsc, time::Instant};
+    use uuid::Uuid;
+
+    /// 75_000ms
+    #[tokio::test]
+    async fn bench_mpsc() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let channel = mpsc::unbounded_channel::<()>();
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 75_000 ms
+    #[tokio::test]
+    async fn bench_channel() {
+        let time = Instant::now();
+        for handle in 0..1000_000 {
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 90_000 ms
+    #[tokio::test]
+    async fn bench_channel_and_parts() {
+        let handles = used_handles(0..1000_000).await;
+        let time = Instant::now();
+        for handle in handles {
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+            let address = Address::from_channel(channel.clone());
+            let child = Child::new(channel.clone(), handle, Link::default());
+            let inbox = Inbox::from_channel(channel);
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 145_000 us
+    #[tokio::test]
+    async fn bench_tokio_and_channel() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let handle = tokio::task::spawn(pending::<()>());
+            let channel = Channel::<()>::new(1, 1, Capacity::default());
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 300_000 us
+    #[tokio::test]
+    async fn bench_tokio_and_move_channel() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+            let address = Address::from_channel(channel.clone());
+            let inbox = Inbox::from_channel(channel.clone());
+            let handle = tokio::task::spawn(async move {
+                pending::<()>().await;
+                drop(inbox);
+            });
+            let child = Child::new(channel, handle, Link::default());
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 1_000_000 us
+    #[tokio::test]
+    async fn bench_process() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            spawn(Config::default(), |inbox: Inbox<()>| async move {
+                pending::<()>().await;
+                drop(inbox);
+            });
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 1_100_000 us
+    #[tokio::test]
+    async fn bench_process_with_uuid() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let uuid = Uuid::new_v4();
+            spawn(Config::default(), |inbox: Inbox<()>| async move {
+                pending::<()>().await;
+                drop(inbox);
+            });
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 250_000 us
+    #[tokio::test]
+    async fn bench_uuid() {
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let uuid = Uuid::new_v4();
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    /// 4_000 us
+    ///
+    /// u64::MAX:
+    /// 18_446_744_073_709_551_615 / 1_000_000 proc/s / 60s / 60m / 24h / 365d
+    /// = 584_942 years of 1_000_000 proc/sec
+    #[tokio::test]
+    async fn bench_atomic_counter() {
+        let counter = AtomicU64::new(0);
+        let time = Instant::now();
+        for _ in 0..1000_000 {
+            let val = counter.fetch_add(1, Ordering::AcqRel);
+        }
+        println!("{} us", time.elapsed().as_micros());
+    }
+
+    #[tokio::test]
+    async fn bench_channel_creation3() {
+        let time = Instant::now();
+        for _ in 0..1000 {
+            let handle = tokio::task::spawn(pending::<()>());
+            let channel = ConcurrentQueue::<()>::unbounded();
+        }
+        println!("Task + Queue: {} us", time.elapsed().as_micros());
+    }
+
+    async fn used_handles(range: Range<i32>) -> Vec<tokio::task::JoinHandle<()>> {
+        let mut handles = range
+            .into_iter()
+            .map(|_| tokio::task::spawn(ready(())))
+            .collect::<Vec<_>>();
+
+        for handle in &mut handles {
+            handle.await.unwrap();
+        }
+
+        handles
     }
 }

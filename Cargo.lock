@@ -341,6 +341,7 @@ dependencies = [
  "concurrent-queue",
  "event-listener",
  "futures",
+ "once_cell",
  "thiserror",
  "tokio",
 ]

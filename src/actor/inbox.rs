@@ -3,6 +3,8 @@ use event_listener as el;
 use futures::Stream;
 use std::{fmt::Debug, sync::Arc};
 
+/// An inbox, used to receive messages from a channel.
+#[derive(Debug)]
 pub struct Inbox<M> {
     // The underlying channel
     channel: Arc<Channel<M>>,
@@ -22,27 +24,33 @@ impl<M> Inbox<M> {
         }
     }
 
-    /// This will attempt to receive a message from the [Inbox]. If there is no message, this
-    /// will return `None`.
+    /// Attempt to receive a message from the [Inbox]. If there is no message, this
+    /// returns `None`.
     pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
         self.channel.try_recv(&mut self.signaled_halt)
     }
 
-    /// Wait until there is a message in the [Inbox].
+    /// Wait until there is a message in the [Inbox], or until the channel is closed.
     pub fn recv(&mut self) -> Rcv<'_, M> {
         self.channel
             .recv(&mut self.signaled_halt, &mut self.listener)
     }
 
+    /// Get a new [Address] to the [Channel].
+    pub fn get_address(&self) -> Address<Channel<M>> {
+        self.channel.add_address();
+        Address::from_channel(self.channel.clone())
+    }
+
     gen::send_methods!();
-    gen::any_channel_methods!();
+    gen::dyn_channel_methods!();
 }
 
 // It should be fine to share the same event-listener between inbox-stream and
 // rcv-future, as long as both clean up properly after returning Poll::Ready.
 // (Always remove the event-listener from the Option)
 impl<M> Stream for Inbox<M> {
-    type Item = Result<M, Halted>;
+    type Item = Result<M, HaltedError>;
 
     fn poll_next(
         mut self: std::pin::Pin<&mut Self>,
@@ -58,7 +66,7 @@ impl<M> Stream for Inbox<M> {
         .map(|res| match res {
             Ok(msg) => Some(Ok(msg)),
             Err(e) => match e {
-                RecvError::Halted => Some(Err(Halted)),
+                RecvError::Halted => Some(Err(HaltedError)),
                 RecvError::ClosedAndEmpty => None,
             },
         })
@@ -68,14 +76,5 @@ impl<M> Stream for Inbox<M> {
 impl<M> Drop for Inbox<M> {
     fn drop(&mut self) {
         self.channel.remove_inbox();
-    }
-}
-
-impl<M> Debug for Inbox<M> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Inbox")
-            .field("listener", &self.listener)
-            .field("signaled_halt", &self.signaled_halt)
-            .finish()
     }
 }

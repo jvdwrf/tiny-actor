@@ -6,12 +6,13 @@ Tiny-actor is a minimal and unopinionated actor framework for Rust.
 
 The main principle of tiny-actor is merging `Inbox`es with `tasks`: It's impossible to create an `Inbox` without a `task`. Following this principle allows us to buildi simple pools and supervision-trees with reliable shutdown behaviour.
 
-This library will not be trying out any API's similar to Actix's, Instead I'm planning to build another actor-library that will use tiny-actor under the hood.
+This library will not be trying out any API's similar to Actix's, instead I'm planning to build another actor-library that will use tiny-actor under the hood.
 
 # Concepts
+The following gives a quick overview of all concepts. For more detailed information about usage, please refer to the crate [documentation](https://docs.rs/tiny-actor).
 
 ## Channel
-A `Channel` is that which couples `Inboxes`, `Addresses` and `Children` together. Every unique `Channel` contains the following rust-structs: 
+A `Channel` is that which couples `Inboxes`, `Addresses` and `Children` together. Every `Channel` contains the following rust-structs: 
 * A single `Child(Pool)`.
 * One or more `Addresses`.
 * One or more `Inboxes`.
@@ -33,59 +34,59 @@ The following diagram shows a visual representation of the naming used:
 ```
 
 ## Actor
-The term `actor` is used to describe (one or more) `processes` sharing a single `Channel`. The `actor` appears to be functioning as a single unit, and the `processes` share an `Address`.
+The term `actor` is used to describe a group of `processes` belonging to a single `Channel`.
 
 ## Process
-The term `process` is used to describe the coupling of an `Inbox` with a `task`. 
+The term `process` is used to describe the a `task` paired with an `Inbox`. 
 
 ## Inbox
 An `Inbox` is a receiver to the `Channel`, and is primarily used to take messages out of the `Channel`. `Inboxes` can be created by spawning new `processes` and should stay coupled to the `task` they were spawned with: An `Inbox` should only be dropped when the `task` is exiting.
 
 ## Address
-An `Address` is the clone-able sender of a `Channel`, and is primarily used to send messages to the `actor`. When all `Addresses` are dropped, the `Channel` is closed automatically. `Addresses` can be awaited, which will wait until the `actor` has exits.
+An `Address` is the clone-able sender of a `Channel`, and is primarily used to send messages to the `actor`. `Addresses` can be awaited, which returns once the `actor` exits.
 
 ## Child(Pool)
-A `Child` is a handle to an `actor` with one `process`. The `Child` can be awaited to return the exit-value of the `task`. The `Child` is not clone-able, and therefore unique to the `Channel`. When the `Child` is dropped, the `actor` will be `halted` and subsequently `aborted`. This can be prevented by detaching the `Child`. 
+A `Child` is a handle to an `actor` consisting of one `process`. It can be awaited to return the exit-value of the spawned `task`. The `Child` is not clone-able, and therefore unique to the `Channel`. When it is dropped, the `actor` will be `halted` and subsequently `aborted`, this behaviour can be by detaching the `Child`. 
 
-A `ChildPool` is similar to a `Child`, except that the `actor` can have multiple `processes`. The `ChildPool` can be streamed to get the exit-values of all spawned `tasks`. More `processes` can be spawned after the `actor` has been spawned, and it's also possible to `halt` a portion of the `processes` of the `actor`.
+A `ChildPool` is similar to a `Child`, except that the `actor` consist of multiple `processes`. The `ChildPool` can be streamed to get the exit-values of all spawned `tasks`. More `processes` can be spawned after the `actor` has been spawned, and it's also possible to `halt` a portion of the `processes` of the `actor`.
 
 ## Closing
-When a `Channel` is `closed`, it is not longer possible to send new messages into it. It is still possible to take out any messages that are left. The `processes` of a closed `Channel` do not have to exit necessarily, but can continue running. Any senders are notified with a `SendError::Closed`, while receivers will receive `RecvError::ClosedAndEmpty` once the `Channel` has been emptied.
+Once `Channel` is `closed`, it is not longer possible to send new messages into it, it is still possible to take out any messages that are left. The `processes` of a closed `Channel` do not have to exit necessarily, but can continue running. Any senders are notified with a `SendError::Closed`, while receivers will receive `RecvError::ClosedAndEmpty` once the `Channel` has been emptied.
 
 ## Halting
-A `process` can be `halted` exactly once, by receiving a `RecvError::Halted`. Afterwards the `process` should exit. An `actor` can be partially halted, meaning that only some of the `processeses` have been `halted`.
+A `process` can be `halted` exactly once, by receiving a `RecvError::Halted`, after which it should exit. An `actor` can be partially halted, meaning that only some of it's `processeses` have been `halted`.
 
 ## Aborting
-An `actor` can be `aborted` through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tasks` to exit abruptly, and can leave bad state behind. Wherever possible, use `halt` instead of `abort`. By default `processes` are automatically `aborted` when the `Child(Pool)` is dropped. This can be prevented by detaching the `Child(Pool)`.
+An `actor` can be `aborted` through tokio's [abort](https://docs.rs/tokio/latest/tokio/task/struct.JoinHandle.html#method.abort) method. This causes the `tasks` to exit abruptly, and can leave bad state behind, wherever possible, use `halt` instead of `abort`.
 
 ## Exiting
 An `exit` can refer to two seperate events which, with good practise, always occur at the same time:
-* A `process` can exit by dropping it's `Inbox`. Once all `Inboxes` of a `Channel` have been dropped, the `actor` has `exited`. This type of exit can be retrieved from the `Channel` at any time using `has_exited`.
-* A `task` can exit, which means the `task` is no longer alive. This can only be queried only once, by awaiting the `Child(Pool)` or by calling `is_finished`. 
-
-Therefore, it is recommended to drop an `Inbox` only when the `task` is also exiting, this way an exit always refers to the same event.
+* A `process` can exit by dropping it's `Inbox`, once all `Inboxes` of a `Channel` have been dropped the `actor` has `exited`. This type of exit can be retrieved from the `Channel` at any time using `has_exited`.
+* A `task` can exit, which means the `task` is no longer alive. This can only be queried from the `Child(Pool)` by awaiting it or by calling `is_finished`. 
 
 ## Link
-An `actor` can either be `attached` or `detached`, which indicates what should happen when the `Child(Pool)` is dropped. If it is `attached`, then it will automatically `halt` all `processes`, and after the `abort-timer`, all processes will be `aborted`. If it is `detached`, then nothing happens when the `Child(Pool)` is dropped.
+An `actor` can either be `attached` or `detached`, which indicates what should happen when the `Child(Pool)` is dropped:
+ * If it is `attached` then it will automatically `halt` all `processes`. After the `abort-timer` expires all processes will be `aborted`. 
+ * If it is `detached`, then nothing happens when the `Child(Pool)` is dropped.
 
 ## Capacity
-A `Channel` can either be bounded or unbounded. A bounded `Channel` can receive messages until it's capacity has been reached. After reaching the capacity, senders must wait until space is available. An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send. 
+A `Channel` can either be `bounded` or `unbounded`. 
+* A bounded `Channel` can receive messages until it's capacity has been reached. After reaching the capacity, senders must wait until space is available. 
+* An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send. 
 
-## Default Config
-* `Attached` with an abort-timer of `1 sec`. 
-* `Unbounded` capacity with BackPressure timeout starting from `5 messages` at `25ns` with an `exponential` growth-factor of `1.3`.
+# Getting started
 
-# Examples
-
-## Basic
+## Basic example
 ```rust
 use tiny_actor::*;
 use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
+    // First we spawn an actor with a default config, and an inbox which receives u32 messages.
     let (child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
         loop {
+            // This loops and receives messages
             match inbox.recv().await {
                 Ok(msg) => println!("Received message: {msg}"),
                 Err(error) => match error {
@@ -102,13 +103,14 @@ async fn main() {
         }
     });
 
+    // Then we can send it messages
     address.send(10).await.unwrap();
     address.send(5).await.unwrap();
 
-    tokio::time::sleep(Duration::from_millis(10));
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
+    // And finally halt the actor for a graceful exit.
     child.halt();
-
     match child.await {
         Ok(exit) => {
             assert_eq!(exit, "Halt");
@@ -122,7 +124,7 @@ async fn main() {
 }
 ```
 
-## Pooled with config
+## Example with ChildPool and custom Config
 ```rust
 use tiny_actor::*;
 use std::time::Duration;
@@ -130,6 +132,8 @@ use futures::stream::StreamExt;
 
 #[tokio::main]
 async fn main() {
+    // First we spawn an actor with a custom config, and an inbox which receives u32 messages.
+    // This will spawn 3 processes, with i = {0, 1, 2}.
     let (pool, address) = spawn_many(
         0..3,
         Config {
@@ -142,6 +146,7 @@ async fn main() {
         },
         |i, mut inbox: Inbox<u32>| async move {
             loop {
+                // Now every actor loops in the same way as in the basic example
                 match inbox.recv().await {
                     Ok(msg) => println!("Received message on actor {i}: {msg}"),
                     Err(error) => match error {
@@ -161,13 +166,18 @@ async fn main() {
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
+    // Send it the numbers 0..10, they will be spread across all processes.
     for num in 0..10 {
         address.send(num).await.unwrap()
     }
 
+    // And halt the actor
     pool.halt();
+
+    // Now we can await all processes (using `futures::StreamExt::collect`)
     let exits = pool.collect::<Vec<_>>().await;
 
+    // And assert that every exit is `Ok("Halt")`
     for exit in exits {
         match exit {
             Ok(exit) => {

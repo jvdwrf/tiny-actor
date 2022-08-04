@@ -9,15 +9,15 @@ use std::{
 use tokio::time::Sleep;
 
 impl<M> Channel<M> {
-    pub(crate) fn send(&self, msg: M) -> Snd<'_, M> {
+    pub fn send(&self, msg: M) -> Snd<'_, M> {
         Snd::new(self, msg)
     }
 
-    pub(crate) fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
+    pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
         Ok(self.push_msg(msg)?)
     }
 
-    pub(crate) fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
+    pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
         match self.capacity() {
             Capacity::Bounded(_) => Ok(self.push_msg(msg)?),
             Capacity::Unbounded(backoff) => match backoff.get_timeout(self.msg_count()) {
@@ -27,7 +27,7 @@ impl<M> Channel<M> {
         }
     }
 
-    pub(crate) fn send_blocking(&self, mut msg: M) -> Result<(), SendError<M>> {
+    pub fn send_blocking(&self, mut msg: M) -> Result<(), SendError<M>> {
         match self.capacity() {
             Capacity::Bounded(_) => loop {
                 msg = match self.push_msg(msg) {
@@ -159,25 +159,3 @@ impl<'a, M> Future for Snd<'a, M> {
         }
     }
 }
-
-/// An error returned when trying to send a message into a `Channel`, but not waiting for space.
-///
-/// This can be either because the `Channel` is closed, or because it is full.
-#[derive(Debug, Clone)]
-pub enum TrySendError<M> {
-    Closed(M),
-    Full(M),
-}
-
-impl<M> From<PushError<M>> for TrySendError<M> {
-    fn from(e: PushError<M>) -> Self {
-        match e {
-            PushError::Full(msg) => Self::Full(msg),
-            PushError::Closed(msg) => Self::Closed(msg),
-        }
-    }
-}
-
-/// An error returned when sending a message into a `Channel` because the `Channel` is closed.
-#[derive(Debug, Clone)]
-pub struct SendError<M>(pub M);

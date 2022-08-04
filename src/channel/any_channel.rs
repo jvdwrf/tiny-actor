@@ -1,10 +1,11 @@
-use std::{sync::Arc, any::Any};
+use event_listener::EventListener;
+use std::{any::Any, fmt::Debug, sync::Arc};
+
 use crate::*;
 
 /// A [Channel]-trait, without information about it's message type. Therefore, it's impossible
 /// to send or receive messages through this.
-pub trait AnyChannel {
-    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
+pub trait DynChannel {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
     fn halt(&self);
@@ -14,17 +15,31 @@ pub trait AnyChannel {
     fn is_closed(&self) -> bool;
     fn capacity(&self) -> &Capacity;
     fn has_exited(&self) -> bool;
+    fn add_address(&self) -> usize;
+    fn remove_address(&self);
+    fn get_exit_listener(&self) -> EventListener;
+    fn actor_id(&self) -> u64;
+}
+
+pub trait AnyChannel: DynChannel + Debug + Send + Sync + 'static {
+    fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
 impl<M: Send + 'static> AnyChannel for Channel<M> {
     fn into_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> {
         self
     }
+}
+
+impl<M> DynChannel for Channel<M> {
     fn close(&self) -> bool {
         self.close()
     }
     fn halt_some(&self, n: u32) {
         self.halt_some(n)
+    }
+    fn halt(&self) {
+        self.halt_some(u32::MAX)
     }
     fn inbox_count(&self) -> usize {
         self.inbox_count()
@@ -44,7 +59,16 @@ impl<M: Send + 'static> AnyChannel for Channel<M> {
     fn has_exited(&self) -> bool {
         self.has_exited()
     }
-    fn halt(&self) {
-        self.halt_some(u32::MAX)
+    fn add_address(&self) -> usize {
+        self.add_address()
+    }
+    fn remove_address(&self) {
+        self.remove_address()
+    }
+    fn get_exit_listener(&self) -> EventListener {
+        self.get_exit_listener()
+    }
+    fn actor_id(&self) -> u64 {
+        self.actor_id()
     }
 }

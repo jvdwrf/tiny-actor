@@ -9,15 +9,15 @@ use std::{
     task::{Context, Poll},
 };
 
-/// An address is a reference to the actor, used to send messages. 
-/// 
+/// An address is a reference to the actor, used to send messages.
+///
 /// Addresses can be of two forms:
 /// * `Address<Channel<M>>`: This is the default form, which can be used to send messages of
 /// type `M`. It can be transformed into an `Address` using [Address::into_dyn].
 /// * `Address`: This form is a dynamic address, which can do everything a normal address can
 /// do, except for sending messages. It can be transformed back into an `Address<Channel<M>>` using
 /// [Address::downcast::<M>].
-/// 
+///
 /// An address can be awaited which returns once the actor exits.
 #[derive(Debug)]
 pub struct Address<C = dyn AnyChannel>
@@ -121,13 +121,10 @@ impl<C: DynChannel + ?Sized> Future for Address<C> {
             if self.exit_listener.is_none() {
                 self.exit_listener = Some(self.channel.get_exit_listener())
             }
-            match self.exit_listener.as_mut().unwrap().poll_unpin(cx) {
-                Poll::Ready(()) => {
-                    assert!(self.has_exited());
-                    self.exit_listener = None;
-                    Poll::Ready(())
-                }
-                Poll::Pending => Poll::Pending,
+            if self.channel.has_exited() {
+                Poll::Ready(())
+            } else {
+                self.exit_listener.as_mut().unwrap().poll_unpin(cx)
             }
         }
     }
@@ -147,6 +144,6 @@ impl<C: DynChannel + ?Sized> Clone for Address<C> {
 
 impl<C: DynChannel + ?Sized> Drop for Address<C> {
     fn drop(&mut self) {
-        self.channel.remove_address()
+        self.channel.remove_address();
     }
 }

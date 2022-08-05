@@ -150,6 +150,8 @@ where
             is_aborted: parts.3,
         }
     }
+
+    gen::send_methods!();
 }
 
 #[cfg(feature = "internals")]
@@ -221,10 +223,10 @@ mod test {
     #[tokio::test]
     async fn downcast_child() {
         let (child, _addr) = spawn(Config::default(), test_loop!());
-        matches!(child.into_dyn().downcast::<()>(), Ok(_));
+        assert!(matches!(child.into_dyn().downcast::<()>(), Ok(_)));
 
         let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!());
-        matches!(pool.into_dyn().downcast::<()>(), Ok(_));
+        assert!(matches!(pool.into_dyn().downcast::<()>(), Ok(_)));
     }
 
     #[tokio::test]
@@ -244,7 +246,7 @@ mod test {
 
         let res = child.into_dyn().try_spawn(test_loop!());
 
-        matches!(res, Err(TrySpawnError::Exited(_)));
+        assert!(matches!(res, Err(TrySpawnError::Exited(_))));
         assert_eq!(addr.process_count(), 0);
     }
 
@@ -253,7 +255,9 @@ mod test {
         let (child, addr) = spawn_one(Config::default(), test_loop!());
         let res = child.into_dyn().try_spawn(test_loop!(u32));
 
-        matches!(res, Err(TrySpawnError::IncorrectType(_)));
+        println!("{res:?}");
+
+        assert!(matches!(res, Err(TrySpawnError::IncorrectType(_))));
         assert_eq!(addr.process_count(), 1);
     }
 
@@ -273,7 +277,7 @@ mod test {
 
         let res = child.spawn(test_loop!());
 
-        matches!(res, Err(SpawnError(_)));
+        assert!(matches!(res, Err(SpawnError(_))));
         assert_eq!(addr.process_count(), 0);
     }
 }

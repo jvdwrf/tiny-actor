@@ -9,10 +9,10 @@ use std::{
     sync::atomic::{AtomicI32, AtomicU64, AtomicUsize, Ordering},
 };
 
-mod any_channel;
+mod channel_trait;
 mod receiving;
 mod sending;
-pub use {any_channel::*, receiving::*, sending::*};
+pub use {channel_trait::*, receiving::*, sending::*};
 
 fn next_actor_id() -> u64 {
     static ACTOR_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -20,7 +20,6 @@ fn next_actor_id() -> u64 {
 }
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
-/// This is wrapped in an Arc to allow sharing between them.
 pub struct Channel<M> {
     /// The underlying queue
     queue: ConcurrentQueue<M>,
@@ -127,34 +126,6 @@ impl<M> Channel<M> {
         prev_count
     }
 
-    /// Add an Address to the channel, incrementing address-count by 1. Afterwards,
-    /// a new Address may be created from this channel.
-    ///
-    /// Returns the previous inbox-count
-    pub(crate) fn add_address(&self) -> usize {
-        self.address_count.fetch_add(1, Ordering::AcqRel)
-    }
-
-    /// Remove an Address from the channel, decrementing address-count by 1. This should
-    /// be called from the destructor of the Address.
-    ///
-    /// ## Notifies
-    /// * `prev-address-count == 1` -> all send_listeners & recv_listeners
-    ///
-    /// ## Panics
-    /// * `prev-address-count == 0`
-    pub(crate) fn remove_address(&self) {
-        // Subtract one from the inbox count
-        let prev_address_count = self.address_count.fetch_sub(1, Ordering::AcqRel);
-        assert!(prev_address_count >= 1);
-
-        // If previous count was 1, then we can close the channel
-        if prev_address_count == 1 {
-            // This notifies senders and receivers
-            // self.close();
-        }
-    }
-
     /// Takes the next message out of the channel.
     ///
     /// Returns an error if the queue is closed, returns none if there is no message
@@ -190,21 +161,6 @@ impl<M> Channel<M> {
         }
     }
 
-    /// Close the channel. Returns `true` if the channel was not closed before this.
-    /// Otherwise, this returns `false`.
-    ///
-    /// ## Notifies
-    /// * if `true` -> all send_listeners & recv_listeners
-    pub(crate) fn close(&self) -> bool {
-        if self.queue.close() {
-            self.recv_event.notify(usize::MAX);
-            self.send_event.notify(usize::MAX);
-            true
-        } else {
-            false
-        }
-    }
-
     /// Can be called by an inbox to know whether it should halt.
     ///
     /// This decrements the halt-counter by one when it is called, therefore every
@@ -228,61 +184,6 @@ impl<M> Channel<M> {
         false
     }
 
-    /// Halt n inboxes associated with this channel. If `n >= #inboxes`, all inboxes
-    /// will be halted. This might leave `halt-count > inbox-count`, however that's not
-    /// a problem. If n > i32::MAX, n = i32::MAX.
-    ///
-    /// # Notifies
-    /// * `n` recv-listeners
-    pub(crate) fn halt_some(&self, n: u32) {
-        // todo: test this
-        let n = i32::try_from(n).unwrap_or(i32::MAX);
-
-        self.halt_count
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
-                // If the count < 0, act as if it's 0.
-                if count < 0 {
-                    Some(n)
-                } else {
-                    // Otherwise, add both together.
-                    Some(count.saturating_add(n))
-                }
-            })
-            .unwrap();
-
-        self.recv_event.notify(n as usize);
-    }
-
-    /// Whether the queue asscociated to the channel has been closed.
-    pub(crate) fn is_closed(&self) -> bool {
-        self.queue.is_closed()
-    }
-
-    /// Returns the amount of messages currently in the channel.
-    pub(crate) fn msg_count(&self) -> usize {
-        self.queue.len()
-    }
-
-    /// Returns the amount of addresses this channel has.
-    pub(crate) fn address_count(&self) -> usize {
-        self.address_count.load(Ordering::Acquire)
-    }
-
-    /// Returns the amount of inboxes this channel has.
-    pub(crate) fn inbox_count(&self) -> usize {
-        self.inbox_count.load(Ordering::Acquire)
-    }
-
-    /// Capacity of the inbox.
-    pub(crate) fn capacity(&self) -> &Capacity {
-        &self.capacity
-    }
-
-    /// Whether all inboxes linked to this channel have exited.
-    pub(crate) fn has_exited(&self) -> bool {
-        self.inbox_count.load(Ordering::Acquire) == 0
-    }
-
     /// Get a new recv-event listener
     pub(crate) fn get_recv_listener(&self) -> EventListener {
         self.recv_event.listen()
@@ -296,11 +197,6 @@ impl<M> Channel<M> {
     /// Get a new exit-event listener
     pub(crate) fn get_exit_listener(&self) -> EventListener {
         self.exit_event.listen()
-    }
-
-    /// Get the actor_id
-    pub(crate) fn actor_id(&self) -> u64 {
-        self.actor_id
     }
 }
 
@@ -318,13 +214,25 @@ impl<M> Debug for Channel<M> {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
 
     use super::{next_actor_id, Channel};
     use crate::*;
     use concurrent_queue::PushError;
     use event_listener::EventListener;
     use futures::FutureExt;
+
+    #[test]
+    fn exit_drops_all_messages() {
+        let msg = Arc::new(());
+
+        let channel = Channel::new(1, 1, Capacity::Bounded(10));
+        channel.send_now(msg.clone()).unwrap();
+
+        assert_eq!(Arc::strong_count(&msg), 2);
+        channel.remove_inbox();
+        assert_eq!(Arc::strong_count(&msg), 1);
+    }
 
     #[test]
     fn actor_ids() {
@@ -386,6 +294,30 @@ mod test {
         });
     }
 
+    #[tokio::test]
+    async fn immedeate_halt() {
+        #[derive(Debug)]
+        enum Message {}
+
+        for _ in 0..100 {
+            let (child, address) =
+                spawn(Config::default(), |mut inbox: Inbox<Message>| async move {
+                    loop {
+                        match inbox.recv().await {
+                            Ok(_) => (),
+                            Err(e) => {
+                                println!("Received halt");
+                                break e
+                            },
+                        }
+                    }
+                });
+            spin_sleep::sleep(Duration::from_nanos(100));
+            address.halt();
+            address.await;
+        }
+    }
+
     #[test]
     fn exiting() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
@@ -404,16 +336,6 @@ mod test {
             exit: 10,
             send: 10,
         });
-    }
-
-    #[test]
-    fn exiting_drops_all_messages() {
-        let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
-        let msg = Arc::new(());
-        channel.push_msg(msg.clone()).unwrap();
-        assert_eq!(Arc::strong_count(&msg), 2);
-        channel.remove_inbox();
-        assert_eq!(Arc::strong_count(&msg), 1);
     }
 
     #[test]
@@ -438,7 +360,7 @@ mod test {
     fn add_inbox_with_0_receivers() {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
-        matches!(channel.try_add_inbox(), Err(_));
+        assert!(matches!(channel.try_add_inbox(), Err(_)));
         assert_eq!(channel.inbox_count(), 0);
     }
 

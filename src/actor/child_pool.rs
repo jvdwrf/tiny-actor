@@ -114,7 +114,7 @@ where
     {
         let channel = match Arc::downcast::<Channel<M>>(self.channel.clone().into_any()) {
             Ok(channel) => channel,
-            Err(_) => return Err(TrySpawnError::Exited(fun)),
+            Err(_) => return Err(TrySpawnError::IncorrectType(fun)),
         };
 
         match channel.try_add_inbox() {
@@ -205,6 +205,8 @@ where
             Err(_) => Err(SpawnError(fun)),
         }
     }
+
+    gen::send_methods!();
 }
 
 #[cfg(feature = "internals")]

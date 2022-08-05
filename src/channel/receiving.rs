@@ -5,13 +5,15 @@ use std::{
 
 use crate::*;
 use event_listener::EventListener;
-use futures::{Future, FutureExt};
+use futures::{pin_mut, Future, FutureExt, Stream};
+use tokio::task::yield_now;
 
 impl<M> Channel<M> {
     /// This will attempt to receive a message from the [Inbox]. If there is no message, this
     /// will return `None`.
     pub fn try_recv(&self, signaled_halt: &mut bool) -> Result<Option<M>, RecvError> {
-        if !*signaled_halt && self.inbox_should_halt() {
+        println!("Trying to receive, signaled halt: {signaled_halt}");
+        if !(*signaled_halt) && self.inbox_should_halt() {
             *signaled_halt = true;
             Err(RecvError::Halted)
         } else {
@@ -20,64 +22,44 @@ impl<M> Channel<M> {
     }
 
     /// Wait until there is a message in the [Inbox].
-    pub fn recv<'a>(
-        &'a self,
-        signaled_halt: &'a mut bool,
-        recv_listener: &'a mut Option<EventListener>,
-    ) -> Rcv<'a, M> {
+    pub fn recv<'a>(&'a self, signaled_halt: &'a mut bool) -> Rcv<'a, M> {
         Rcv {
             channel: self,
             signaled_halt,
-            listener: recv_listener,
+            listener: None,
         }
     }
-}
 
-pub(crate) fn poll_recv<M>(
-    channel: &Channel<M>,
-    signaled_halt: &mut bool,
-    listener: &mut Option<EventListener>,
-    cx: &mut Context<'_>,
-) -> Poll<Result<M, RecvError>> {
-    loop {
-        // Attempt to receive a message, and return if necessary
-        match channel.try_recv(signaled_halt) {
-            Ok(None) => (),
+    fn poll_try_recv(
+        &self,
+        signaled_halt: &mut bool,
+        listener: &mut Option<EventListener>,
+    ) -> Option<Result<M, RecvError>> {
+        match self.try_recv(signaled_halt) {
+            Ok(None) => None,
             Ok(Some(msg)) => {
                 *listener = None;
-                return Poll::Ready(Ok(msg));
+                Some(Ok(msg))
             }
             Err(signal) => {
                 *listener = None;
                 match signal {
-                    RecvError::Halted => return Poll::Ready(Err(RecvError::Halted)),
-                    RecvError::ClosedAndEmpty => {
-                        return Poll::Ready(Err(RecvError::ClosedAndEmpty))
-                    }
+                    RecvError::Halted => Some(Err(RecvError::Halted)),
+                    RecvError::ClosedAndEmpty => Some(Err(RecvError::ClosedAndEmpty)),
                 }
             }
-        }
-
-        // Otherwise, acquire a listener, if we don't have one yet
-        if listener.is_none() {
-            *listener = Some(channel.get_recv_listener())
-        }
-
-        // And poll the future
-        match listener.as_mut().unwrap().poll_unpin(cx) {
-            Poll::Ready(()) => *listener = None,
-            Poll::Pending => return Poll::Pending,
         }
     }
 }
 
-/// A future returned by receiving messages from an `Inbox`.
+/// A future returned by receiving messages from an [Inbox].
 ///
-/// This can be `.await`-ed to get the message from the `Inbox`.
+/// This can be awaited or streamed to get the messages.
+#[derive(Debug)]
 pub struct Rcv<'a, M> {
     channel: &'a Channel<M>,
     signaled_halt: &'a mut bool,
-    listener: &'a mut Option<EventListener>,
+    listener: Option<EventListener>,
 }
 
 impl<'a, M> Unpin for Rcv<'a, M> {}
@@ -86,21 +68,59 @@ impl<'a, M> Future for Rcv<'a, M> {
     type Output = Result<M, RecvError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        let mut_self = &mut *self.as_mut();
-        poll_recv(
-            mut_self.channel,
-            mut_self.signaled_halt,
-            mut_self.listener,
-            cx,
-        )
+        let Self {
+            channel,
+            signaled_halt,
+            listener,
+        } = &mut *self;
+
+        // First try to receive once, and yield if successful
+        if let Some(res) = channel.poll_try_recv(signaled_halt, listener) {
+            let fut = yield_now();
+            pin_mut!(fut);
+            let _ = fut.poll(cx);
+            return Poll::Ready(res);
+        }
+
+        loop {
+            // Otherwise, acquire a listener, if we don't have one yet
+            if listener.is_none() {
+                *listener = Some(channel.get_recv_listener())
+            }
+
+            // Attempt to receive a message, and return if ready
+            if let Some(res) = channel.poll_try_recv(signaled_halt, listener) {
+                return Poll::Ready(res);
+            }
+
+            // And poll the listener
+            match listener.as_mut().unwrap().poll_unpin(cx) {
+                Poll::Ready(()) => {
+                    *listener = None;
+                    // Attempt to receive a message, and return if ready
+                    if let Some(res) = channel.poll_try_recv(signaled_halt, listener) {
+                        return Poll::Ready(res);
+                    }
+                }
+                Poll::Pending => return Poll::Pending,
+            }
+        }
     }
 }
 
-impl<'a, M> std::fmt::Debug for Rcv<'a, M> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Rcv")
-            // .field("channel", &self.channel)
-            .field("signaled_halt", &self.signaled_halt)
-            .finish()
+impl<'a, M> Stream for Rcv<'a, M> {
+    type Item = Result<M, HaltedError>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.poll(cx).map(|res| match res {
+            Ok(msg) => Some(Ok(msg)),
+            Err(e) => match e {
+                RecvError::Halted => Some(Err(HaltedError)),
+                RecvError::ClosedAndEmpty => None,
+            },
+        })
     }
 }

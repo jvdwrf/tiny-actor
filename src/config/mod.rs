@@ -110,6 +110,11 @@ impl Link {
             }
         }
     }
+
+    /// Whether the link is attached.
+    pub fn is_attached(&self) -> bool {
+        matches!(self, Link::Attached(_))
+    }
 }
 
 /// This decides whether the actor is bounded or unbounded. If it is unbounded,
@@ -127,6 +132,13 @@ pub enum Capacity {
 impl Default for Capacity {
     fn default() -> Self {
         Capacity::Unbounded(BackPressure::default())
+    }
+}
+
+impl Capacity {
+    /// Whether the capacity is bounded.
+    pub fn is_bounded(&self) -> bool {
+        matches!(self, Self::Bounded(_))
     }
 }
 

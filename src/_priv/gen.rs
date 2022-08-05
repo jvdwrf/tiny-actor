@@ -35,6 +35,10 @@ macro_rules! dyn_channel_methods {
             self.channel.is_closed()
         }
 
+        pub fn is_bounded(&self) -> bool {
+            self.channel.is_bounded()
+        }
+
         /// Get the [Capacity] of the [Channel].
         pub fn capacity(&self) -> &Capacity {
             self.channel.capacity()
@@ -57,8 +61,8 @@ macro_rules! send_methods {
     () => {
         /// Attempt to send a message to the actor.
         ///
-        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will fail.
-        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        /// * In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout this fails.
+        /// * In the case of a `bounded` [Channel], when it is full this fails.
         ///
         /// For `bounded` channels, this method is the same as [send_now](Address::send_now).
         pub fn try_send(&self, msg: M) -> Result<(), TrySendError<M>> {
@@ -67,8 +71,8 @@ macro_rules! send_methods {
 
         /// Attempt to send a message to the actor.
         ///
-        /// In the case of an `unbounded` [Channel], any [BackPressure] is ignored.
-        /// In the case of a `bounded` [Channel], when it is full, this method will fail.
+        /// * In the case of an `unbounded` [Channel], any [BackPressure] is ignored.
+        /// * In the case of a `bounded` [Channel], when it is full this fails.
         ///
         /// For `bounded` channels, this method is the same as [try_send](Address::send_now).
         pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
@@ -77,10 +81,9 @@ macro_rules! send_methods {
 
         /// Attempt to send a message to the actor.
         ///
-        /// In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout, this will
-        /// wait and then send the message.
-        /// In the case of a `bounded` [Channel], when it is full, this will wait untill space is
-        /// available.
+        /// * In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout this waits
+        /// untill the timeout is over.
+        /// * In the case of a `bounded` [Channel], when it is full this waits untill space is available.
         pub fn send(&self, msg: M) -> Snd<'_, M> {
             self.channel.send(msg)
         }
@@ -95,12 +98,16 @@ pub(crate) use send_methods;
 
 macro_rules! child_methods {
     () => {
-        /// Attach the actor. Returns the old abort-timeout, if it was attached before this.
+        /// Attach the actor.
+        ///
+        /// Returns the old abort-timeout if it was already attached.
         pub fn attach(&mut self, duration: Duration) -> Option<Duration> {
             self.link.attach(duration)
         }
 
-        /// Detach the actor. Returns the old abort-timeout, if it was attached before this.
+        /// Detach the actor.
+        ///
+        /// Returns the old abort-timeout if it was attached before.
         pub fn detach(&mut self) -> Option<Duration> {
             self.link.detach()
         }
@@ -108,6 +115,11 @@ macro_rules! child_methods {
         /// Whether the actor is aborted.
         pub fn is_aborted(&self) -> bool {
             self.is_aborted
+        }
+
+        /// Whether the actor is attached.
+        pub fn is_attached(&self) -> bool {
+            self.link.is_attached()
         }
 
         /// Get a reference to the current [Link] of the actor.

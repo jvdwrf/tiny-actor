@@ -5,6 +5,7 @@ use futures::{Future, FutureExt};
 use std::{
     pin::Pin,
     task::{Context, Poll},
+    time::Duration,
 };
 use tokio::time::Sleep;
 
@@ -57,6 +58,7 @@ impl<M> Channel<M> {
 }
 
 /// The send-future, this can be `.await`-ed to send the message.
+#[derive(Debug)]
 pub struct Snd<'a, M> {
     channel: &'a Channel<M>,
     msg: Option<M>,
@@ -64,17 +66,118 @@ pub struct Snd<'a, M> {
 }
 
 /// Listener for a bounded channel, sleep for an unbounded channel.
+#[derive(Debug)]
 enum SndFut {
     Listener(EventListener),
-    Sleep(Pin<Box<Sleep>>), // todo: can this box be removed?
+    Sleep(Pin<Box<Sleep>>),
+}
+
+impl Unpin for SndFut {}
+impl Future for SndFut {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match &mut *self {
+            SndFut::Listener(listener) => listener.poll_unpin(cx),
+            SndFut::Sleep(sleep) => sleep.poll_unpin(cx),
+        }
+    }
+}
+
+impl SndFut {
+    fn unwrap_listener(&mut self) -> &mut EventListener {
+        match self {
+            SndFut::Listener(listener) => listener,
+            SndFut::Sleep(_) => panic!("Future was not a listener"),
+        }
+    }
+
+    fn unwrap_sleep(&mut self) -> &mut Pin<Box<Sleep>> {
+        match self {
+            SndFut::Listener(_) => panic!("Future was not a sleep"),
+            SndFut::Sleep(sleep) => sleep,
+        }
+    }
 }
 
 impl<'a, M> Snd<'a, M> {
     pub(crate) fn new(channel: &'a Channel<M>, msg: M) -> Self {
-        Snd {
-            channel,
-            msg: Some(msg),
-            fut: None,
+        match &channel.capacity {
+            Capacity::Bounded(_) => Snd {
+                channel,
+                msg: Some(msg),
+                fut: None,
+            },
+            Capacity::Unbounded(back_pressure) => Snd {
+                channel,
+                msg: Some(msg),
+                fut: back_pressure
+                    .get_timeout(channel.msg_count())
+                    .map(|timeout| SndFut::Sleep(Box::pin(tokio::time::sleep(timeout)))),
+            },
+        }
+    }
+
+    fn poll_bounded_send(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), SendError<M>>> {
+        macro_rules! try_send {
+            ($msg:ident) => {
+                match self.channel.try_send($msg) {
+                    Ok(()) => return Poll::Ready(Ok(())),
+                    Err(e) => match e {
+                        TrySendError::Closed(msg) => return Poll::Ready(Err(SendError(msg))),
+                        TrySendError::Full(msg_new) => $msg = msg_new,
+                    },
+                }
+            };
+        }
+
+        let mut msg = self.msg.take().unwrap();
+
+        try_send!(msg);
+
+        loop {
+            // Otherwise, we create the future if it doesn't exist yet.
+            if self.fut.is_none() {
+                self.fut = Some(SndFut::Listener(self.channel.get_send_listener()))
+            }
+
+            try_send!(msg);
+
+            // Poll it once, and return if pending, otherwise we loop again.
+            match self.fut.as_mut().unwrap().poll_unpin(cx) {
+                Poll::Ready(()) => {
+                    try_send!(msg);
+                    self.fut = None
+                }
+                Poll::Pending => {
+                    self.msg = Some(msg);
+                    return Poll::Pending;
+                }
+            }
+        }
+    }
+
+    fn poll_unbounded_send(
+        &mut self,
+        backpressure: &BackPressure,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), SendError<M>>> {
+        if let Some(fut) = &mut self.fut {
+            match fut.poll_unpin(cx) {
+                Poll::Ready(()) => self.poll_push_unbounded(),
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            self.poll_push_unbounded()
+        }
+    }
+
+    fn poll_push_unbounded(&mut self) -> Poll<Result<(), SendError<M>>> {
+        let msg = self.msg.take().unwrap();
+        match self.channel.push_msg(msg) {
+            Ok(()) => Poll::Ready(Ok(())),
+            Err(PushError::Closed(msg)) => Poll::Ready(Err(SendError(msg))),
+            Err(PushError::Full(_msg)) => unreachable!(),
         }
     }
 }
@@ -85,77 +188,9 @@ impl<'a, M> Future for Snd<'a, M> {
     type Output = Result<(), SendError<M>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        fn bounded_send<T>(
-            pin: &mut Pin<&mut Snd<'_, T>>,
-            cx: &mut Context<'_>,
-        ) -> Poll<Result<(), SendError<T>>> {
-            let mut msg = pin.msg.take().unwrap();
-            loop {
-                // Try to send a message into the channel, and return if possible
-                msg = match pin.channel.push_msg(msg) {
-                    Ok(()) => {
-                        return Poll::Ready(Ok(()));
-                    }
-                    Err(PushError::Closed(msg)) => {
-                        return Poll::Ready(Err(SendError(msg)));
-                    }
-                    Err(PushError::Full(msg)) => msg,
-                };
-
-                // Otherwise, we create the future if it doesn't exist yet.
-                if pin.fut.is_none() {
-                    pin.fut = Some(SndFut::Listener(pin.channel.get_send_listener()))
-                }
-
-                if let SndFut::Listener(listener) = pin.fut.as_mut().unwrap() {
-                    // Poll it once, and return if pending, otherwise we loop again.
-                    match listener.poll_unpin(cx) {
-                        Poll::Ready(()) => pin.fut = None,
-                        Poll::Pending => {
-                            pin.msg = Some(msg);
-                            return Poll::Pending;
-                        }
-                    }
-                } else {
-                    unreachable!("Channel must be bounded")
-                }
-            }
-        }
-
-        fn push_msg_unbounded<T>(pin: &mut Pin<&mut Snd<'_, T>>) -> Poll<Result<(), SendError<T>>> {
-            let msg = pin.msg.take().unwrap();
-            match pin.channel.push_msg(msg) {
-                Ok(()) => Poll::Ready(Ok(())),
-                Err(PushError::Closed(msg)) => Poll::Ready(Err(SendError(msg))),
-                Err(PushError::Full(_msg)) => unreachable!(),
-            }
-        }
-
         match self.channel.capacity() {
-            Capacity::Bounded(_) => bounded_send(&mut self, cx),
-            Capacity::Unbounded(backpressure) => match &mut self.fut {
-                Some(SndFut::Sleep(sleep_fut)) => match sleep_fut.poll_unpin(cx) {
-                    Poll::Ready(()) => {
-                        self.fut = None;
-                        push_msg_unbounded(&mut self)
-                    }
-                    Poll::Pending => Poll::Pending,
-                },
-                None => match backpressure.get_timeout(self.channel.msg_count()) {
-                    Some(timeout) => {
-                        let mut sleep_fut = Box::pin(tokio::time::sleep(timeout));
-                        match sleep_fut.poll_unpin(cx) {
-                            Poll::Ready(()) => push_msg_unbounded(&mut self),
-                            Poll::Pending => {
-                                self.fut = Some(SndFut::Sleep(sleep_fut));
-                                Poll::Pending
-                            }
-                        }
-                    }
-                    None => push_msg_unbounded(&mut self),
-                },
-                Some(SndFut::Listener(_)) => unreachable!("Channel must be unbounded"),
-            },
+            Capacity::Bounded(_) => self.poll_bounded_send(cx),
+            Capacity::Unbounded(backpressure) => self.poll_unbounded_send(backpressure, cx),
         }
     }
 }

@@ -19,7 +19,7 @@ use std::time::Duration;
 ///
 /// The capacity is `unbounded`, with `exponential` backoff starting `5 messages` in the inbox
 /// at `25 ns`, with a growth-factor of `1.3`.
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Config {
     pub link: Link,
     pub capacity: Capacity,
@@ -123,16 +123,10 @@ impl Link {
 /// # Default
 /// `unbounded`, with `exponential` backoff starting `5 messages` in the inbox
 /// at `25 ns`, with a growth-factor of `1.3`
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Capacity {
     Bounded(usize),
     Unbounded(BackPressure),
-}
-
-impl Default for Capacity {
-    fn default() -> Self {
-        Capacity::Unbounded(BackPressure::default())
-    }
 }
 
 impl Capacity {
@@ -142,75 +136,103 @@ impl Capacity {
     }
 }
 
-/// This decides how an actor with an unbouned channel handles message overload. This works
-/// by applying a timeout whenever there are more than `start_at` messages in the channel.
-/// The timeout [Growth] is multiplied with the given `timeout`.
-///
-/// # Default
-/// `exponential` backoff starting `5 messages` in the inbox at `25 ns`, with a
-/// growth-factor of `1.3`.
-#[derive(Clone, Debug, PartialEq)]
-pub struct BackPressure {
-    pub start_at: usize,
-    pub timeout: Duration,
-    pub growth: Growth,
-}
-
-impl Default for BackPressure {
+impl Default for Capacity {
     fn default() -> Self {
-        Self {
-            start_at: 5,
-            timeout: Duration::from_nanos(25),
-            growth: Growth::Exponential(1.3),
-        }
+        Capacity::Unbounded(BackPressure::default())
     }
 }
 
+/// The backpressure mechanism for unbounded inboxes.
+///
+/// # Default
+/// `exponential` backoff starting `5 messages` in the inbox at `25 ns`, with a
+/// growth-factor of `1.3`
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackPressure {
+    starts_at: usize,
+    base_ns: u64,
+    exp_growth: Option<f32>,
+}
+
 impl BackPressure {
-    /// Get a back-pressure configuration that is disabled. This will never return a timeout,
-    /// no matter how full the channel is.
+    /// Creates a new linear backpressure.
+    ///
+    /// The timeout is calculated as follows:
+    /// `timeout = timeout * (msg_count - start_at)`
+    /// 
+    /// # Panics
+    /// Panics if the `timeout` is bigger than `213_503 days`.
+    pub fn linear(starts_at: usize, timeout: Duration) -> Self {
+        let base_ns = timeout
+            .as_nanos()
+            .try_into()
+            .expect("Base duration > 213_503 days");
+
+        Self {
+            starts_at,
+            base_ns,
+            exp_growth: None,
+        }
+    }
+
+    /// Creates a new linear backpressure.
+    ///
+    /// The timeout is calculated as follows:
+    /// `timeout = timeout * (factor ^ (msg_count - start_at))`
+    ///
+    /// # Panics
+    /// Panics if the `factor` is negative, or if the `timeout` is bigger than `213_503 days.`
+    pub fn exponential(starts_at: usize, timeout: Duration, factor: f32) -> Self {
+        if factor < 0.0 {
+            panic!("Negative factors not allowed!")
+        }
+
+        let base_ns = timeout
+            .as_nanos()
+            .try_into()
+            .expect("Base duration > 213_503 days");
+
+        Self {
+            starts_at,
+            base_ns,
+            exp_growth: Some(factor),
+        }
+    }
+
+    /// Create a new backpressure that is disabled.
     pub fn disabled() -> Self {
         Self {
-            start_at: usize::MAX,
-            timeout: Duration::from_nanos(0),
-            growth: Growth::Linear,
+            starts_at: usize::MAX,
+            base_ns: 0,
+            exp_growth: None,
         }
     }
 
     pub(crate) fn get_timeout(&self, msg_count: usize) -> Option<Duration> {
-        if msg_count >= self.start_at {
-            match self.growth {
-                Growth::Exponential(factor) => {
-                    let msg_count_diff = (msg_count - self.start_at).try_into().unwrap_or(i32::MAX);
-                    let mult = factor.powi(msg_count_diff);
-                    let nanos = self.timeout.as_nanos();
-                    Some(Duration::from_nanos((nanos as f32 * mult) as u64))
-                }
-                Growth::Linear => {
-                    let mult = (msg_count - self.start_at + 1) as u64;
-                    let nanos = self.timeout.as_nanos();
-                    Some(Duration::from_nanos(
-                        (nanos * mult as u128).try_into().unwrap_or(u64::MAX),
-                    ))
-                }
+        if msg_count < self.starts_at {
+            return None;
+        }
+
+        match self.exp_growth {
+            Some(factor) => {
+                let diff = (msg_count - self.starts_at).try_into().unwrap_or(i32::MAX);
+                let mult = (factor as f64).powi(diff);
+                let ns = self.base_ns as f64 * mult;
+                Some(Duration::from_nanos(ns as u64))
             }
-        } else {
-            None
+            None => {
+                let diff = (msg_count - self.starts_at + 1) as u64;
+                let ns = self.base_ns.saturating_mul(diff);
+                Some(Duration::from_nanos(ns))
+            }
         }
     }
 }
 
-/// How the timeout of an unbounded channel should grow, given more messages in the
-/// channel. This can either be linear or exponential.
-///
-/// # Default
-/// The default is `exponential`, with a growth-factor of `1.3`.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Growth {
-    /// `timeout = base_timeout * (growth ^ (msg_count - start_at))`
-    Exponential(f32),
-    /// `timeout = base_timeout * (msg_count - start_at)`
-    Linear,
+impl Default for BackPressure {
+    fn default() -> Self {
+        Self::exponential(5, Duration::from_nanos(25), 1.3)
+    }
 }
 
 #[cfg(test)]
@@ -219,72 +241,47 @@ mod test {
     use std::time::Duration;
 
     #[test]
-    fn backpressure_linear() {
-        let cfg = BackPressure {
-            start_at: 0,
-            timeout: Duration::from_secs(1),
-            growth: Growth::Linear,
-        };
-
-        assert_eq!(cfg.get_timeout(0), Some(Duration::from_secs(1)));
-        assert_eq!(cfg.get_timeout(1), Some(Duration::from_secs(2)));
-        assert_eq!(cfg.get_timeout(10), Some(Duration::from_secs(11)));
-    }
-
-    #[test]
     fn backpressure_linear_start_at() {
-        let cfg = BackPressure {
-            start_at: 10,
-            timeout: Duration::from_secs(1),
-            growth: Growth::Linear,
-        };
+        let bp = BackPressure::linear(10, Duration::from_secs(1));
 
-        assert_eq!(cfg.get_timeout(0), None);
-        assert_eq!(cfg.get_timeout(1), None);
-        assert_eq!(cfg.get_timeout(9), None);
-        assert_eq!(cfg.get_timeout(10), Some(Duration::from_secs(1)));
-        assert_eq!(cfg.get_timeout(11), Some(Duration::from_secs(2)));
-        assert_eq!(cfg.get_timeout(20), Some(Duration::from_secs(11)));
+        assert_eq!(bp.get_timeout(9), None);
+        assert_eq!(bp.get_timeout(10), Some(Duration::from_secs(1)));
     }
 
     #[test]
-    fn backpressure_linear_max() {
-        let cfg = BackPressure {
-            start_at: usize::MAX,
-            timeout: Duration::from_secs(1),
-            growth: Growth::Linear,
-        };
+    fn backpressure_exponential_start_at() {
+        let bp = BackPressure::exponential(10, Duration::from_secs(1), 1.1);
 
-        assert_eq!(cfg.get_timeout(0), None);
-        assert_eq!(cfg.get_timeout(1), None);
-        assert_eq!(cfg.get_timeout(9), None);
-        assert_eq!(cfg.get_timeout(usize::MAX - 1), None);
-        assert_eq!(cfg.get_timeout(usize::MAX), Some(Duration::from_secs(1)));
+        assert_eq!(bp.get_timeout(9), None);
+        assert_eq!(bp.get_timeout(10), Some(Duration::from_nanos(1_000_000_000)));
+    }
+
+    #[test]
+    fn backpressure_linear() {
+        let bp = BackPressure::linear(0, Duration::from_secs(1));
+
+        assert_eq!(bp.get_timeout(0), Some(Duration::from_secs(1)));
+        assert_eq!(bp.get_timeout(1), Some(Duration::from_secs(2)));
+        assert_eq!(bp.get_timeout(10), Some(Duration::from_secs(11)));
     }
 
     #[test]
     fn backpressure_exponential() {
-        let cfg = BackPressure {
-            start_at: 0,
-            timeout: Duration::from_secs(1),
-            growth: Growth::Exponential(1.1),
-        };
+        let bp = BackPressure::exponential(0, Duration::from_secs(1), 1.1);
 
-        assert_eq!(
-            cfg.get_timeout(0),
-            Some(Duration::from_nanos(1_000_000_000))
-        );
-        assert_eq!(
-            cfg.get_timeout(1),
-            Some(Duration::from_nanos(1_100_000_000))
-        );
-        assert_eq!(
-            cfg.get_timeout(2),
-            Some(Duration::from_nanos(1_210_000_000))
-        );
-        assert_eq!(
-            cfg.get_timeout(3),
-            Some(Duration::from_nanos(1_331_000_064))
-        );
+        assert_eq!(bp.get_timeout(0), Some(Duration::from_nanos(1_000_000_000)));
+        assert_eq!(bp.get_timeout(1), Some(Duration::from_nanos(1_100_000_023)));
+        assert_eq!(bp.get_timeout(2), Some(Duration::from_nanos(1_210_000_052)));
+        assert_eq!(bp.get_timeout(3), Some(Duration::from_nanos(1_331_000_086)));
+    }
+
+    #[test]
+    fn disabled() {
+        let bp = BackPressure::disabled();
+
+        assert_eq!(bp.get_timeout(0), None);
+        assert_eq!(bp.get_timeout(9), None);
+        assert_eq!(bp.get_timeout(usize::MAX - 1), None);
+        assert_eq!(bp.get_timeout(usize::MAX), Some(Duration::from_nanos(0)));
     }
 }

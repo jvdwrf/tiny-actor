@@ -138,11 +138,11 @@ async fn main() {
         0..3,
         Config {
             link: Link::Attached(Duration::from_secs(1)),
-            capacity: Capacity::Unbounded(BackPressure {
-                start_at: 5,
-                timeout: Duration::from_nanos(25),
-                growth: Growth::Exponential(1.3),
-            }),
+            capacity: Capacity::Unbounded(BackPressure::exponential(
+                5,
+                Duration::from_nanos(25),
+                1.3,
+            )),
         },
         |i, mut inbox: Inbox<u32>| async move {
             loop {

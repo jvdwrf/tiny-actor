@@ -4,36 +4,18 @@ use futures::{FutureExt, Stream, stream::FusedStream};
 use crate::*;
 use std::{fmt::Debug, sync::Arc};
 
-/// An inbox, used to receive messages from a channel.
+/// An Inbox is a non clone-able receiver part of a channel.
+/// 
+/// An Inbox is mostly used to receive messages, with [Inbox::recv], [Inbox::try_recv] or
+/// [futures::Stream].
 #[derive(Debug)]
 pub struct Inbox<M> {
     // The underlying channel
     channel: Arc<Channel<M>>,
+    // Whether the inbox has signaled halt yet
     signaled_halt: bool,
+    // The recv_listener for streams and Rcv
     recv_listener: Option<EventListener>,
-}
-
-impl<M> Stream for Inbox<M> {
-    type Item = Result<M, HaltedError>;
-
-    fn poll_next(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.recv().poll_unpin(cx).map(|res| match res {
-            Ok(msg) => Some(Ok(msg)),
-            Err(e) => match e {
-                RecvError::Halted => Some(Err(HaltedError)),
-                RecvError::ClosedAndEmpty => None,
-            },
-        })
-    }
-}
-
-impl<M> FusedStream for Inbox<M> {
-    fn is_terminated(&self) -> bool {
-        self.channel.is_closed()
-    }
 }
 
 impl<M> Inbox<M> {
@@ -66,6 +48,29 @@ impl<M> Inbox<M> {
 
     gen::send_methods!();
     gen::dyn_channel_methods!();
+}
+
+impl<M> Stream for Inbox<M> {
+    type Item = Result<M, HaltedError>;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.recv().poll_unpin(cx).map(|res| match res {
+            Ok(msg) => Some(Ok(msg)),
+            Err(e) => match e {
+                RecvError::Halted => Some(Err(HaltedError)),
+                RecvError::ClosedAndEmpty => None,
+            },
+        })
+    }
+}
+
+impl<M> FusedStream for Inbox<M> {
+    fn is_terminated(&self) -> bool {
+        self.channel.is_closed()
+    }
 }
 
 impl<M> Drop for Inbox<M> {

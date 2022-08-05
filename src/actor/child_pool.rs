@@ -152,7 +152,6 @@ where
     }
 
     /// Halts the actor, and then waits for it to exit.
-    /// todo
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
     pub fn shutdown(self, timer: Duration) -> ShutdownPoolFut<E, C> {
@@ -283,7 +282,6 @@ pub struct ShutdownPoolFut<E: Send + 'static, C: DynChannel + ?Sized> {
     exits: Option<Vec<Result<E, ExitError>>>,
 }
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownPoolFut<E, C> {}
 impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPoolFut<E, C> {
     type Output = Vec<Result<E, ExitError>>;
 
@@ -327,3 +325,5 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPoolFut<E, C>
         }
     }
 }
+
+impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownPoolFut<E, C> {}

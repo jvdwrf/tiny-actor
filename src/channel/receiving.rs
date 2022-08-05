@@ -110,3 +110,9 @@ impl<'a, M> Future for Rcv<'a, M> {
         }
     }
 }
+
+impl<'a, M> Drop for Rcv<'a, M> {
+    fn drop(&mut self) {
+        *self.listener = None;
+    }
+}

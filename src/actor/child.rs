@@ -108,7 +108,6 @@ where
     }
 
     /// Halts the actor, and then waits for it to exit.
-    /// todo
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
     pub async fn shutdown(mut self, timeout: Duration) -> Result<E, ExitError> {

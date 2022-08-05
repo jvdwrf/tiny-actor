@@ -30,7 +30,7 @@ impl<M> Inbox<M> {
 
     /// Attempt to receive a message from the [Inbox]. If there is no message, this
     /// returns `None`.
-    pub fn try_recv(&mut self) -> Result<Option<M>, RecvError> {
+    pub fn try_recv(&mut self) -> Result<M, TryRecvError> {
         self.channel.try_recv(&mut self.signaled_halt)
     }
 

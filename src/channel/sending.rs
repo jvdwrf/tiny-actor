@@ -140,10 +140,7 @@ impl<'a, M> Snd<'a, M> {
         }
     }
 
-    fn poll_unbounded_send(
-        &mut self,
-        cx: &mut Context<'_>,
-    ) -> Poll<Result<(), SendError<M>>> {
+    fn poll_unbounded_send(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), SendError<M>>> {
         if let Some(fut) = &mut self.fut {
             match fut.poll_unpin(cx) {
                 Poll::Ready(()) => self.poll_push_unbounded(),
@@ -174,5 +171,94 @@ impl<'a, M> Future for Snd<'a, M> {
             Capacity::Bounded(_) => self.poll_bounded_send(cx),
             Capacity::Unbounded(_) => self.poll_unbounded_send(cx),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{sync::Arc, time::Duration};
+
+    use tokio::time::Instant;
+
+    use crate::*;
+
+    #[test]
+    fn try_send_with_space() {
+        let channel = Channel::<()>::new(1, 1, Capacity::Bounded(10));
+        channel.try_send(()).unwrap();
+        channel.send_now(()).unwrap();
+        assert_eq!(channel.msg_count(), 2);
+
+        let channel = Channel::<()>::new(1, 1, Capacity::Unbounded(BackPressure::disabled()));
+        channel.try_send(()).unwrap();
+        channel.send_now(()).unwrap();
+        assert_eq!(channel.msg_count(), 2);
+    }
+
+    #[test]
+    fn try_send_unbounded_full() {
+        let channel = Channel::<()>::new(
+            1,
+            1,
+            Capacity::Unbounded(BackPressure::linear(0, Duration::from_secs(1))),
+        );
+        assert_eq!(channel.try_send(()), Err(TrySendError::Full(())));
+        assert_eq!(channel.send_now(()), Ok(()));
+        assert_eq!(channel.msg_count(), 1);
+    }
+
+    #[test]
+    fn try_send_bounded_full() {
+        let channel = Channel::<()>::new(1, 1, Capacity::Bounded(1));
+        channel.try_send(()).unwrap();
+        assert_eq!(channel.try_send(()), Err(TrySendError::Full(())));
+        assert_eq!(channel.send_now(()), Err(TrySendError::Full(())));
+        assert_eq!(channel.msg_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_with_space() {
+        let channel = Channel::<()>::new(1, 1, Capacity::Bounded(10));
+        channel.send(()).await.unwrap();
+        assert_eq!(channel.msg_count(), 1);
+
+        let channel = Channel::<()>::new(1, 1, Capacity::Unbounded(BackPressure::disabled()));
+        channel.send(()).await.unwrap();
+        assert_eq!(channel.msg_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn send_unbounded_full() {
+        let channel = Channel::<()>::new(
+            1,
+            1,
+            Capacity::Unbounded(BackPressure::linear(0, Duration::from_millis(1))),
+        );
+        let time = Instant::now();
+        channel.send(()).await.unwrap();
+        channel.send(()).await.unwrap();
+        channel.send(()).await.unwrap();
+        assert!(time.elapsed().as_millis() > 6);
+        assert_eq!(channel.msg_count(), 3);
+    }
+
+    #[tokio::test]
+    async fn send_bounded_full() {
+        let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::Bounded(1)));
+        let channel_clone = channel.clone();
+
+        tokio::task::spawn(async move {
+            let time = Instant::now();
+            channel_clone.send(()).await.unwrap();
+            channel_clone.send(()).await.unwrap();
+            channel_clone.send(()).await.unwrap();
+            assert!(time.elapsed().as_millis() > 2);
+        });
+
+        channel.recv(&mut false, &mut None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        channel.recv(&mut false, &mut None).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        channel.recv(&mut false, &mut None).await.unwrap();
     }
 }

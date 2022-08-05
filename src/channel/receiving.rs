@@ -4,6 +4,7 @@ use std::{
 };
 
 use crate::*;
+use concurrent_queue::PopError;
 use event_listener::EventListener;
 use futures::{pin_mut, Future, FutureExt};
 use tokio::task::yield_now;
@@ -11,12 +12,15 @@ use tokio::task::yield_now;
 impl<M> Channel<M> {
     /// This will attempt to receive a message from the [Inbox]. If there is no message, this
     /// will return `None`.
-    pub fn try_recv(&self, signaled_halt: &mut bool) -> Result<Option<M>, RecvError> {
+    pub fn try_recv(&self, signaled_halt: &mut bool) -> Result<M, TryRecvError> {
         if !(*signaled_halt) && self.inbox_should_halt() {
             *signaled_halt = true;
-            Err(RecvError::Halted)
+            Err(TryRecvError::Halted)
         } else {
-            self.take_next_msg().map_err(|()| RecvError::ClosedAndEmpty)
+            self.pop_msg().map_err(|e| match e {
+                PopError::Empty => TryRecvError::Empty,
+                PopError::Closed => TryRecvError::ClosedAndEmpty,
+            })
         }
     }
 
@@ -39,18 +43,21 @@ impl<M> Channel<M> {
         listener: &mut Option<EventListener>,
     ) -> Option<Result<M, RecvError>> {
         match self.try_recv(signaled_halt) {
-            Ok(None) => None,
-            Ok(Some(msg)) => {
+            Ok(msg) => {
                 *listener = None;
                 Some(Ok(msg))
             }
-            Err(signal) => {
-                *listener = None;
-                match signal {
-                    RecvError::Halted => Some(Err(RecvError::Halted)),
-                    RecvError::ClosedAndEmpty => Some(Err(RecvError::ClosedAndEmpty)),
+            Err(signal) => match signal {
+                TryRecvError::Halted => {
+                    *listener = None;
+                    Some(Err(RecvError::Halted))
                 }
-            }
+                TryRecvError::ClosedAndEmpty => {
+                    *listener = None;
+                    Some(Err(RecvError::ClosedAndEmpty))
+                }
+                TryRecvError::Empty => None,
+            },
         }
     }
 }
@@ -114,5 +121,122 @@ impl<'a, M> Future for Rcv<'a, M> {
 impl<'a, M> Drop for Rcv<'a, M> {
     fn drop(&mut self) {
         *self.listener = None;
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{future::ready, sync::Arc, time::Duration};
+
+    use crate::*;
+
+    #[test]
+    fn try_recv() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        channel.push_msg(()).unwrap();
+        channel.push_msg(()).unwrap();
+
+        assert!(channel.try_recv(&mut true).is_ok());
+        assert!(channel.try_recv(&mut false).is_ok());
+        assert_eq!(channel.try_recv(&mut true), Err(TryRecvError::Empty));
+        assert_eq!(channel.try_recv(&mut false), Err(TryRecvError::Empty));
+    }
+
+    #[test]
+    fn try_recv_closed() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        channel.push_msg(()).unwrap();
+        channel.push_msg(()).unwrap();
+        channel.close();
+
+        assert!(channel.try_recv(&mut true).is_ok());
+        assert!(channel.try_recv(&mut false).is_ok());
+        assert_eq!(
+            channel.try_recv(&mut true),
+            Err(TryRecvError::ClosedAndEmpty)
+        );
+        assert_eq!(
+            channel.try_recv(&mut false),
+            Err(TryRecvError::ClosedAndEmpty)
+        );
+    }
+
+    #[test]
+    fn try_recv_halt() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        channel.push_msg(()).unwrap();
+        channel.push_msg(()).unwrap();
+        channel.halt_some(1);
+
+        assert_eq!(channel.try_recv(&mut false), Err(TryRecvError::Halted));
+        assert!(channel.try_recv(&mut true).is_ok());
+        assert!(channel.try_recv(&mut false).is_ok());
+        assert_eq!(channel.try_recv(&mut true), Err(TryRecvError::Empty));
+        assert_eq!(channel.try_recv(&mut false), Err(TryRecvError::Empty));
+    }
+
+    #[tokio::test]
+    async fn recv_immedeate() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let mut listener = None;
+        channel.push_msg(()).unwrap();
+        channel.close();
+
+        assert_eq!(channel.recv(&mut false, &mut listener).await, Ok(()));
+        assert_eq!(
+            channel.recv(&mut false, &mut listener).await,
+            Err(RecvError::ClosedAndEmpty)
+        );
+    }
+
+    #[tokio::test]
+    async fn recv_delayed() {
+        let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+        let channel_clone = channel.clone();
+
+        let handle = tokio::task::spawn(async move {
+            let mut listener = None;
+            assert_eq!(channel_clone.recv(&mut false, &mut listener).await, Ok(()));
+            assert_eq!(
+                channel_clone.recv(&mut false, &mut listener).await,
+                Err(RecvError::ClosedAndEmpty)
+            );
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        channel.push_msg(()).unwrap();
+        channel.close();
+        handle.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_recv_notifies_next() {
+        let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
+        let channel_clone = channel.clone();
+
+        let handle = tokio::task::spawn(async move {
+            let mut listener = None;
+            let mut halt = false;
+            let mut recv1 = channel_clone.recv(&mut halt, &mut listener);
+            tokio::select! {
+                biased;
+                _ = &mut recv1 => {
+                    panic!()
+                }
+                _ = ready(||()) => {
+                    ()
+                }
+            }
+            let mut listener = None;
+            let mut halt = false;
+            let recv2 = channel_clone.recv(&mut halt, &mut listener);
+            drop(recv1);
+            recv2.await.unwrap();
+        });
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        channel.push_msg(()).unwrap();
+        channel.close();
+        handle.await.unwrap();
     }
 }

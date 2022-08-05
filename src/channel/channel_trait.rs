@@ -59,9 +59,8 @@ impl<M> DynChannel for Channel<M> {
     /// a problem. If n > i32::MAX, n = i32::MAX.
     ///
     /// # Notifies
-    /// * `n` recv-listeners
+    /// * all recv-listeners
     fn halt_some(&self, n: u32) {
-        // todo: test this
         let n = i32::try_from(n).unwrap_or(i32::MAX);
 
         self.halt_count

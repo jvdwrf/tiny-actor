@@ -23,6 +23,22 @@ pub enum RecvError {
     ClosedAndEmpty,
 }
 
+/// Error returned when receiving a message from an inbox.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
+pub enum TryRecvError {
+    /// Process has been halted and should now exit.
+    #[error("Couldn't receive because the process has been halted")]
+    Halted,
+    /// The channel is empty, but is not yet closed. New messges may arrive
+    #[error("Couldn't receive because the channel is empty")]
+    Empty,
+    /// Channel has been closed, and contains no more messages. It is impossible for new
+    /// messages to be sent to the channel.
+    #[error("Couldn't receive becuase the channel is closed and empty")]
+    ClosedAndEmpty,
+
+}
+
 /// An error returned when trying to send a message into a channel.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Error)]
 pub enum TrySendError<M> {

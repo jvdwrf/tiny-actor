@@ -14,11 +14,6 @@ mod receiving;
 mod sending;
 pub use {channel_trait::*, receiving::*, sending::*};
 
-fn next_actor_id() -> u64 {
-    static ACTOR_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
-    ACTOR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
-}
-
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
 pub struct Channel<M> {
     /// The underlying queue
@@ -41,7 +36,7 @@ pub struct Channel<M> {
     /// The amount of processes that should still be halted.
     /// Can be negative bigger than amount of processes in total.
     halt_count: AtomicI32,
-
+    /// The actor_id, generated once and cannot be changed afterwards.
     actor_id: u64,
 }
 
@@ -120,7 +115,7 @@ impl<M> Channel<M> {
             // Also notify the exit-listeners, since the process exited.
             self.exit_event.notify(usize::MAX);
             // drop all messages, since no more inboxes exist.
-            while self.take_next_msg().is_ok() {}
+            while self.pop_msg().is_ok() {}
         }
 
         prev_count
@@ -133,16 +128,12 @@ impl<M> Channel<M> {
     ///
     /// ## Notifies
     /// on success -> 1 send_listener & 1 recv_listener
-    pub(crate) fn take_next_msg(&self) -> Result<Option<M>, ()> {
-        match self.queue.pop() {
-            Ok(msg) => {
-                self.send_event.notify(1);
-                self.recv_event.notify(1);
-                Ok(Some(msg))
-            }
-            Err(PopError::Empty) => Ok(None),
-            Err(PopError::Closed) => Err(()),
-        }
+    pub(crate) fn pop_msg(&self) -> Result<M, PopError> {
+        self.queue.pop().map(|msg| {
+            self.send_event.notify(1);
+            self.recv_event.notify(1);
+            msg
+        })
     }
 
     /// Push a message into the channel.
@@ -167,8 +158,6 @@ impl<M> Channel<M> {
     /// inbox should only receive true from this method once! The inbox keeps it's own
     /// local state about whether it has received true from this method.
     pub(crate) fn inbox_should_halt(&self) -> bool {
-        // todo: test this
-
         // If the count is bigger than 0, we might have to halt.
         if self.halt_count.load(Ordering::Acquire) > 0 {
             // Now subtract 1 from the count
@@ -212,49 +201,87 @@ impl<M> Debug for Channel<M> {
     }
 }
 
+fn next_actor_id() -> u64 {
+    static ACTOR_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
+    ACTOR_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
 #[cfg(test)]
 mod test {
-    use std::{sync::Arc, time::Duration};
+    use std::{
+        sync::{atomic::Ordering, Arc},
+        time::Duration,
+    };
 
     use super::{next_actor_id, Channel};
     use crate::*;
-    use concurrent_queue::PushError;
+    use concurrent_queue::{PushError, PopError};
     use event_listener::EventListener;
     use futures::FutureExt;
 
     #[test]
-    fn exit_drops_all_messages() {
-        let msg = Arc::new(());
-
-        let channel = Channel::new(1, 1, Capacity::Bounded(10));
-        channel.send_now(msg.clone()).unwrap();
-
-        assert_eq!(Arc::strong_count(&msg), 2);
-        channel.remove_inbox();
-        assert_eq!(Arc::strong_count(&msg), 1);
+    fn actor_ids_increase() {
+        let mut old_id = next_actor_id();
+        for _ in 0..100 {
+            let id = next_actor_id();
+            assert!(id > old_id);
+            old_id = id;
+        }
     }
 
     #[test]
-    fn actor_ids() {
-        let id1 = next_actor_id();
-        let id2 = next_actor_id();
-        assert!(id1 < id2);
-    }
-
-    #[test]
-    fn channel_actor_ids() {
+    fn channels_have_actor_ids() {
         let id1 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
         let id2 = Channel::<()>::new(1, 1, Capacity::Bounded(10)).actor_id();
         assert!(id1 < id2);
     }
 
     #[test]
-    fn capacity_types() {
+    fn capacity_types_are_correct() {
         let channel = Channel::<()>::new(1, 1, Capacity::Bounded(10));
         assert!(channel.queue.capacity().is_some());
-
+        assert!(channel.is_bounded());
         let channel = Channel::<()>::new(1, 1, Capacity::Unbounded(BackPressure::default()));
         assert!(channel.queue.capacity().is_none());
+        assert!(!channel.is_bounded());
+    }
+
+    #[test]
+    fn adding_removing_addresses() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        assert_eq!(channel.address_count(), 1);
+        channel.add_address();
+        assert_eq!(channel.address_count(), 2);
+        channel.remove_address();
+        assert_eq!(channel.address_count(), 1);
+        channel.remove_address();
+        assert_eq!(channel.address_count(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn remove_address_below_0() {
+        let channel = Channel::<()>::new(0, 1, Capacity::default());
+        channel.remove_address();
+    }
+
+    #[test]
+    fn adding_removing_inboxes() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        assert_eq!(channel.inbox_count(), 1);
+        channel.try_add_inbox().unwrap();
+        assert_eq!(channel.inbox_count(), 2);
+        channel.remove_inbox();
+        assert_eq!(channel.inbox_count(), 1);
+        channel.remove_inbox();
+        assert_eq!(channel.inbox_count(), 0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn remove_inbox_below_0() {
+        let channel = Channel::<()>::new(1, 0, Capacity::default());
+        channel.remove_inbox();
     }
 
     #[test]
@@ -267,7 +294,7 @@ mod test {
         assert!(channel.is_closed());
         assert!(!channel.has_exited());
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
-        assert_eq!(channel.take_next_msg(), Err(()));
+        assert_eq!(channel.pop_msg(), Err(PopError::Closed));
         listeners.assert_notified(Assert {
             recv: 10,
             exit: 0,
@@ -276,7 +303,27 @@ mod test {
     }
 
     #[test]
-    fn no_more_senders_remaining_doesnt_close() {
+    fn exiting() {
+        let channel = Channel::<()>::new(1, 1, Capacity::default());
+        let listeners = Listeners::size_10(&channel);
+
+        channel.remove_inbox();
+
+        assert!(channel.is_closed());
+        assert!(channel.has_exited());
+        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.address_count(), 1);
+        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
+        assert_eq!(channel.pop_msg(), Err(PopError::Closed));
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 10,
+            send: 10,
+        });
+    }
+
+    #[test]
+    fn removing_all_addresses() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
 
@@ -294,48 +341,16 @@ mod test {
         });
     }
 
-    #[tokio::test]
-    async fn immedeate_halt() {
-        #[derive(Debug)]
-        enum Message {}
-
-        for _ in 0..100 {
-            let (_child, address) =
-                spawn(Config::default(), |mut inbox: Inbox<Message>| async move {
-                    loop {
-                        match inbox.recv().await {
-                            Ok(_) => (),
-                            Err(e) => {
-                                println!("Received halt");
-                                break e
-                            },
-                        }
-                    }
-                });
-            spin_sleep::sleep(Duration::from_nanos(100));
-            address.halt();
-            address.await;
-        }
-    }
-
     #[test]
-    fn exiting() {
-        let channel = Channel::<()>::new(1, 1, Capacity::default());
-        let listeners = Listeners::size_10(&channel);
+    fn exiting_drops_all_messages() {
+        let msg = Arc::new(());
 
+        let channel = Channel::new(1, 1, Capacity::Bounded(10));
+        channel.send_now(msg.clone()).unwrap();
+
+        assert_eq!(Arc::strong_count(&msg), 2);
         channel.remove_inbox();
-
-        assert!(channel.is_closed());
-        assert!(channel.has_exited());
-        assert_eq!(channel.inbox_count(), 0);
-        assert_eq!(channel.address_count(), 1);
-        assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
-        assert_eq!(channel.take_next_msg(), Err(()));
-        listeners.assert_notified(Assert {
-            recv: 10,
-            exit: 10,
-            send: 10,
-        });
+        assert_eq!(Arc::strong_count(&msg), 1);
     }
 
     #[test]
@@ -348,8 +363,18 @@ mod test {
         assert_eq!(Arc::strong_count(&msg), 2);
     }
 
+    #[tokio::test]
+    async fn immedeate_halt() {
+        for i in 0..100 {
+            let (_child, address) = spawn(Config::default(), test_loop!());
+            spin_sleep::sleep(Duration::from_nanos(i));
+            address.halt();
+            address.await;
+        }
+    }
+
     #[test]
-    fn try_add_inbox_with_0_receivers() {
+    fn add_inbox_with_0_inboxes_is_err() {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         assert_eq!(channel.try_add_inbox(), Err(()));
@@ -357,7 +382,7 @@ mod test {
     }
 
     #[test]
-    fn add_inbox_with_0_receivers() {
+    fn add_inbox_with_0_addresses_is_ok() {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         assert!(matches!(channel.try_add_inbox(), Err(_)));
@@ -365,11 +390,13 @@ mod test {
     }
 
     #[test]
-    fn sending_notifies() {
+    fn push_msg() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         let listeners = Listeners::size_10(&channel);
+
         channel.push_msg(()).unwrap();
 
+        assert_eq!(channel.msg_count(), 1);
         listeners.assert_notified(Assert {
             recv: 1,
             exit: 0,
@@ -378,17 +405,58 @@ mod test {
     }
 
     #[test]
-    fn recveiving_notifies() {
+    fn pop_msg() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
         channel.push_msg(()).unwrap();
         let listeners = Listeners::size_10(&channel);
-        channel.take_next_msg().unwrap();
 
+        channel.pop_msg().unwrap();
+        assert_eq!(channel.msg_count(), 0);
         listeners.assert_notified(Assert {
             recv: 1,
             exit: 0,
             send: 1,
         });
+    }
+
+    #[test]
+    fn halt() {
+        let channel = Channel::<()>::new(1, 3, Capacity::default());
+        let listeners = Listeners::size_10(&channel);
+
+        channel.halt();
+
+        assert_eq!(channel.halt_count.load(Ordering::Acquire), i32::MAX);
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 0,
+            send: 0,
+        });
+    }
+
+    #[test]
+    fn partial_halt() {
+        let channel = Channel::<()>::new(1, 3, Capacity::default());
+        let listeners = Listeners::size_10(&channel);
+
+        channel.halt_some(2);
+
+        assert_eq!(channel.halt_count.load(Ordering::Acquire), 2);
+        listeners.assert_notified(Assert {
+            recv: 10,
+            exit: 0,
+            send: 0,
+        });
+    }
+
+    #[test]
+    fn inbox_should_halt() {
+        let channel = Channel::<()>::new(1, 3, Capacity::default());
+        channel.halt_some(2);
+
+        assert!(channel.inbox_should_halt());
+        assert!(channel.inbox_should_halt());
+        assert!(!channel.inbox_should_halt());
     }
 
     struct Listeners {
@@ -448,159 +516,5 @@ mod test {
             assert_eq!(assert.exit, exit);
             assert_eq!(assert.send, send);
         }
-    }
-}
-
-#[cfg(bench)]
-mod bench {
-    use super::Channel;
-    use crate::*;
-    use concurrent_queue::ConcurrentQueue;
-    use futures::future::{pending, ready};
-    use std::{
-        ops::Range,
-        sync::{
-            atomic::{AtomicU64, Ordering},
-            Arc,
-        },
-    };
-    use tokio::{sync::mpsc, time::Instant};
-    use uuid::Uuid;
-
-    /// 75_000ms
-    #[tokio::test]
-    async fn bench_mpsc() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let channel = mpsc::unbounded_channel::<()>();
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 75_000 ms
-    #[tokio::test]
-    async fn bench_channel() {
-        let time = Instant::now();
-        for handle in 0..1000_000 {
-            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 90_000 ms
-    #[tokio::test]
-    async fn bench_channel_and_parts() {
-        let handles = used_handles(0..1000_000).await;
-        let time = Instant::now();
-        for handle in handles {
-            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
-            let address = Address::from_channel(channel.clone());
-            let child = Child::new(channel.clone(), handle, Link::default());
-            let inbox = Inbox::from_channel(channel);
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 145_000 us
-    #[tokio::test]
-    async fn bench_tokio_and_channel() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let handle = tokio::task::spawn(pending::<()>());
-            let channel = Channel::<()>::new(1, 1, Capacity::default());
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 300_000 us
-    #[tokio::test]
-    async fn bench_tokio_and_move_channel() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let channel = Arc::new(Channel::<()>::new(1, 1, Capacity::default()));
-            let address = Address::from_channel(channel.clone());
-            let inbox = Inbox::from_channel(channel.clone());
-            let handle = tokio::task::spawn(async move {
-                pending::<()>().await;
-                drop(inbox);
-            });
-            let child = Child::new(channel, handle, Link::default());
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 1_000_000 us
-    #[tokio::test]
-    async fn bench_process() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            spawn(Config::default(), |inbox: Inbox<()>| async move {
-                pending::<()>().await;
-                drop(inbox);
-            });
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 1_100_000 us
-    #[tokio::test]
-    async fn bench_process_with_uuid() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let uuid = Uuid::new_v4();
-            spawn(Config::default(), |inbox: Inbox<()>| async move {
-                pending::<()>().await;
-                drop(inbox);
-            });
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 250_000 us
-    #[tokio::test]
-    async fn bench_uuid() {
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let uuid = Uuid::new_v4();
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    /// 4_000 us
-    ///
-    /// u64::MAX:
-    /// 18_446_744_073_709_551_615 / 1_000_000 proc/s / 60s / 60m / 24h / 365d
-    /// = 584_942 years of 1_000_000 proc/sec
-    #[tokio::test]
-    async fn bench_atomic_counter() {
-        let counter = AtomicU64::new(0);
-        let time = Instant::now();
-        for _ in 0..1000_000 {
-            let val = counter.fetch_add(1, Ordering::AcqRel);
-        }
-        println!("{} us", time.elapsed().as_micros());
-    }
-
-    #[tokio::test]
-    async fn bench_channel_creation3() {
-        let time = Instant::now();
-        for _ in 0..1000 {
-            let handle = tokio::task::spawn(pending::<()>());
-            let channel = ConcurrentQueue::<()>::unbounded();
-        }
-        println!("Task + Queue: {} us", time.elapsed().as_micros());
-    }
-
-    async fn used_handles(range: Range<i32>) -> Vec<tokio::task::JoinHandle<()>> {
-        let mut handles = range
-            .into_iter()
-            .map(|_| tokio::task::spawn(ready(())))
-            .collect::<Vec<_>>();
-
-        for handle in &mut handles {
-            handle.await.unwrap();
-        }
-
-        handles
     }
 }

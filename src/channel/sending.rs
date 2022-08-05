@@ -5,7 +5,6 @@ use futures::{Future, FutureExt};
 use std::{
     pin::Pin,
     task::{Context, Poll},
-    time::Duration,
 };
 use tokio::time::Sleep;
 
@@ -84,22 +83,6 @@ impl Future for SndFut {
     }
 }
 
-impl SndFut {
-    fn unwrap_listener(&mut self) -> &mut EventListener {
-        match self {
-            SndFut::Listener(listener) => listener,
-            SndFut::Sleep(_) => panic!("Future was not a listener"),
-        }
-    }
-
-    fn unwrap_sleep(&mut self) -> &mut Pin<Box<Sleep>> {
-        match self {
-            SndFut::Listener(_) => panic!("Future was not a sleep"),
-            SndFut::Sleep(sleep) => sleep,
-        }
-    }
-}
-
 impl<'a, M> Snd<'a, M> {
     pub(crate) fn new(channel: &'a Channel<M>, msg: M) -> Self {
         match &channel.capacity {
@@ -159,7 +142,6 @@ impl<'a, M> Snd<'a, M> {
 
     fn poll_unbounded_send(
         &mut self,
-        backpressure: &BackPressure,
         cx: &mut Context<'_>,
     ) -> Poll<Result<(), SendError<M>>> {
         if let Some(fut) = &mut self.fut {
@@ -190,7 +172,7 @@ impl<'a, M> Future for Snd<'a, M> {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.channel.capacity() {
             Capacity::Bounded(_) => self.poll_bounded_send(cx),
-            Capacity::Unbounded(backpressure) => self.poll_unbounded_send(backpressure, cx),
+            Capacity::Unbounded(_) => self.poll_unbounded_send(cx),
         }
     }
 }

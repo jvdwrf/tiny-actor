@@ -300,7 +300,7 @@ mod test {
         enum Message {}
 
         for _ in 0..100 {
-            let (child, address) =
+            let (_child, address) =
                 spawn(Config::default(), |mut inbox: Inbox<Message>| async move {
                     loop {
                         match inbox.recv().await {

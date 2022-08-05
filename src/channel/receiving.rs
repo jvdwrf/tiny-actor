@@ -5,7 +5,7 @@ use std::{
 
 use crate::*;
 use event_listener::EventListener;
-use futures::{pin_mut, Future, FutureExt, Stream};
+use futures::{pin_mut, Future, FutureExt};
 use tokio::task::yield_now;
 
 impl<M> Channel<M> {
@@ -21,11 +21,15 @@ impl<M> Channel<M> {
     }
 
     /// Wait until there is a message in the [Inbox].
-    pub fn recv<'a>(&'a self, signaled_halt: &'a mut bool) -> Rcv<'a, M> {
+    pub fn recv<'a>(
+        &'a self,
+        signaled_halt: &'a mut bool,
+        listener: &'a mut Option<EventListener>,
+    ) -> Rcv<'a, M> {
         Rcv {
             channel: self,
             signaled_halt,
-            listener: None,
+            listener,
         }
     }
 
@@ -58,7 +62,7 @@ impl<M> Channel<M> {
 pub struct Rcv<'a, M> {
     channel: &'a Channel<M>,
     signaled_halt: &'a mut bool,
-    listener: Option<EventListener>,
+    listener: &'a mut Option<EventListener>,
 }
 
 impl<'a, M> Unpin for Rcv<'a, M> {}
@@ -84,7 +88,7 @@ impl<'a, M> Future for Rcv<'a, M> {
         loop {
             // Otherwise, acquire a listener, if we don't have one yet
             if listener.is_none() {
-                *listener = Some(channel.get_recv_listener())
+                **listener = Some(channel.get_recv_listener())
             }
 
             // Attempt to receive a message, and return if ready
@@ -95,7 +99,7 @@ impl<'a, M> Future for Rcv<'a, M> {
             // And poll the listener
             match listener.as_mut().unwrap().poll_unpin(cx) {
                 Poll::Ready(()) => {
-                    *listener = None;
+                    **listener = None;
                     // Attempt to receive a message, and return if ready
                     if let Some(res) = channel.poll_try_recv(signaled_halt, listener) {
                         return Poll::Ready(res);
@@ -104,22 +108,5 @@ impl<'a, M> Future for Rcv<'a, M> {
                 Poll::Pending => return Poll::Pending,
             }
         }
-    }
-}
-
-impl<'a, M> Stream for Rcv<'a, M> {
-    type Item = Result<M, HaltedError>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        self.poll(cx).map(|res| match res {
-            Ok(msg) => Some(Ok(msg)),
-            Err(e) => match e {
-                RecvError::Halted => Some(Err(HaltedError)),
-                RecvError::ClosedAndEmpty => None,
-            },
-        })
     }
 }

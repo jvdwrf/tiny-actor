@@ -12,7 +12,6 @@ impl<M> Channel<M> {
     /// This will attempt to receive a message from the [Inbox]. If there is no message, this
     /// will return `None`.
     pub fn try_recv(&self, signaled_halt: &mut bool) -> Result<Option<M>, RecvError> {
-        println!("Trying to receive, signaled halt: {signaled_halt}");
         if !(*signaled_halt) && self.inbox_should_halt() {
             *signaled_halt = true;
             Err(RecvError::Halted)

@@ -107,13 +107,14 @@ where
         }
     }
 
-    /// Halts the actor, and then waits for it to exit.
+    /// Halts the actor, and then waits for it to exit. This always returns with the
+    /// result of the task, and closes the channel.
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub async fn shutdown(mut self, timeout: Duration) -> Result<E, ExitError> {
+    pub async fn shutdown(&mut self, timeout: Duration) -> Result<E, ExitError> {
         self.halt();
 
-        match tokio::time::timeout(timeout, &mut self).await {
+        match tokio::time::timeout(timeout, &mut *self).await {
             Ok(res) => res,
             Err(_) => {
                 self.abort();
@@ -256,13 +257,13 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_success() {
-        let (child, _addr) = spawn(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
         assert!(child.shutdown(Duration::from_millis(5)).await.is_ok());
     }
 
     #[tokio::test]
     async fn shutdown_failure() {
-        let (child, _addr) = spawn(Config::default(), |_inbox: Inbox<()>| async {
+        let (mut child, _addr) = spawn(Config::default(), |_inbox: Inbox<()>| async {
             pending::<()>().await;
         });
         assert!(matches!(

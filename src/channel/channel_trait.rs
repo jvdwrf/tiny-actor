@@ -12,9 +12,7 @@ use crate::*;
 pub trait DynChannel {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
-    fn halt(&self) {
-        self.halt_some(u32::MAX)
-    }
+    fn halt(&self);
     fn inbox_count(&self) -> usize;
     fn msg_count(&self) -> usize;
     fn address_count(&self) -> usize;
@@ -143,5 +141,11 @@ impl<M> DynChannel for Channel<M> {
     /// Whether the channel is bounded.
     fn is_bounded(&self) -> bool {
         self.capacity.is_bounded()
+    }
+
+    // Closes the channel and halts all actors.
+    fn halt(&self) {
+        self.close();
+        self.halt_some(u32::MAX);
     }
 }

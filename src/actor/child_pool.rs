@@ -151,13 +151,14 @@ where
         }
     }
 
-    /// Halts the actor, and then waits for it to exit.
+    /// Halts the actor, and then waits for it to exit. This will always wait for ALL
+    /// processes to exit, and the channel is closed after usage.
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub async fn shutdown(mut self, timeout: Duration) -> Vec<Result<E, ExitError>> {
+    pub async fn shutdown(&mut self, timeout: Duration) -> Vec<Result<E, ExitError>> {
         self.halt();
 
-        let mut results = (&mut self)
+        let mut results = self
             .take_until(tokio::time::sleep(timeout))
             .collect::<Vec<_>>()
             .await;
@@ -327,7 +328,7 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_success() {
-        let (child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
+        let (mut child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
 
         let results = child.shutdown(Duration::from_millis(5)).await;
         assert_eq!(results.len(), 3);
@@ -339,9 +340,10 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_failure() {
-        let (child, _addr) = spawn_many(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
-            pending::<()>().await;
-        });
+        let (mut child, _addr) =
+            spawn_many(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
+                pending::<()>().await;
+            });
 
         let results = child.shutdown(Duration::from_millis(5)).await;
         assert_eq!(results.len(), 3);

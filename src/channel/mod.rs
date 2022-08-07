@@ -430,8 +430,15 @@ mod test {
         listeners.assert_notified(Assert {
             recv: 10,
             exit: 0,
-            send: 0,
+            send: 10,
         });
+    }
+
+    #[test]
+    fn halt_closes_channel() {
+        let channel = Channel::<()>::new(1, 3, Capacity::default());
+        channel.halt();
+        assert!(channel.is_closed());
     }
 
     #[test]

@@ -161,7 +161,7 @@ where
     /// Halts the actor, and then returns a stream that waits for exits.
     ///
     /// If the timeout expires before all processes have exited, the actor will be aborted.
-    /// 
+    ///
     /// # Examples
     /// ```no_run
     /// # use tiny_actor::*;
@@ -169,7 +169,7 @@ where
     /// # #[tokio::main]
     /// # async fn main() {
     /// use futures::StreamExt;
-    /// 
+    ///
     /// let mut pool: ChildPool<()> = todo!();
     /// let exits: Vec<_> = pool.shutdown(Duration::from_secs(1)).collect().await;
     /// # }
@@ -292,7 +292,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
 }
 
 /// Stream returned when shutting down a [ChildPool].
-/// 
+///
 /// This stream can be collected into a vec with [StreamExt::collect]:
 pub struct ShutdownPool<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     pool: &'a mut ChildPool<E, C>,
@@ -327,11 +327,73 @@ impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPool<'a, 
 
 #[cfg(test)]
 mod test {
+    use futures::channel::oneshot;
     use futures::future::pending;
-    use futures::{FutureExt, StreamExt};
+    use futures::StreamExt;
+    use std::sync::atomic::{AtomicU8, Ordering};
     use std::time::Duration;
 
     use crate::*;
+
+    #[tokio::test]
+    async fn dropping() {
+        static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
+        let (child, addr) = spawn_many(
+            0..3,
+            Config::default(),
+            |_, mut inbox: Inbox<()>| async move {
+                if let Err(RecvError::Halted) = inbox.recv().await {
+                    HALT_COUNT.fetch_add(1, Ordering::AcqRel);
+                };
+            },
+        );
+        drop(child);
+        addr.await;
+
+        assert_eq!(HALT_COUNT.load(Ordering::Acquire), 3);
+    }
+
+    #[tokio::test]
+    async fn dropping_halts_then_aborts() {
+        static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
+        let (child, addr) = spawn_many(
+            0..3,
+            Config::attached(Duration::from_millis(1)),
+            |_, mut inbox: Inbox<()>| async move {
+                if let Err(RecvError::Halted) = inbox.recv().await {
+                    HALT_COUNT.fetch_add(1, Ordering::AcqRel);
+                };
+                pending::<()>().await;
+            },
+        );
+        drop(child);
+        addr.await;
+
+        assert_eq!(HALT_COUNT.load(Ordering::Acquire), 3);
+    }
+
+    #[tokio::test]
+    async fn dropping_detached() {
+        static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
+
+        let (child, addr) = spawn_many(
+            0..3,
+            Config::detached(),
+            |_, mut inbox: Inbox<()>| async move {
+                if let Err(RecvError::Halted) = inbox.recv().await {
+                    HALT_COUNT.fetch_add(1, Ordering::AcqRel);
+                };
+            },
+        );
+        drop(child);
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        addr.try_send(()).unwrap();
+        addr.try_send(()).unwrap();
+        addr.try_send(()).unwrap();
+        addr.await;
+
+        assert_eq!(HALT_COUNT.load(Ordering::Acquire), 0);
+    }
 
     #[tokio::test]
     async fn downcast() {

@@ -61,6 +61,13 @@ impl Config {
             capacity: Capacity::default(),
         }
     }
+
+    pub fn attached(timeout: Duration) -> Self {
+        Self {
+            link: Link::Attached(timeout),
+            capacity: Capacity::default(),
+        }
+    }
 }
 
 /// This decides whether the actor is attached or detached. If it is attached, then the

@@ -1,5 +1,5 @@
 use crate::*;
-use futures::{pin_mut, Future, FutureExt};
+use futures::{Future, FutureExt};
 use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, sync::Arc, task::Poll, time::Duration};
 use tokio::{task::JoinHandle, time::Sleep};
 
@@ -248,7 +248,57 @@ impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for Shutdown<'a, E, C
 mod test {
     use std::{future::pending, time::Duration};
 
+    use tokio::sync::oneshot;
+
     use crate::*;
+
+    #[tokio::test]
+    async fn dropping() {
+        let (tx, rx) = oneshot::channel();
+        let (child, _addr) = spawn(Config::default(), |mut inbox: Inbox<()>| async move {
+            if let Err(RecvError::Halted) = inbox.recv().await {
+                tx.send(true).unwrap();
+            } else {
+                tx.send(false).unwrap()
+            }
+        });
+        drop(child);
+        assert!(rx.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropping_aborts() {
+        let (tx, rx) = oneshot::channel();
+        let (child, _addr) = spawn(
+            Config::attached(Duration::from_millis(1)),
+            |mut inbox: Inbox<()>| async move {
+                if let Err(RecvError::Halted) = inbox.recv().await {
+                    tx.send(true).unwrap();
+                    pending::<()>().await;
+                } else {
+                    tx.send(false).unwrap()
+                }
+            },
+        );
+        drop(child);
+        assert!(rx.await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn dropping_detached() {
+        let (tx, rx) = oneshot::channel();
+        let (child, addr) = spawn(Config::detached(), |mut inbox: Inbox<()>| async move {
+            if let Err(RecvError::Halted) = inbox.recv().await {
+                tx.send(true).unwrap();
+            } else {
+                tx.send(false).unwrap()
+            }
+        });
+        drop(child);
+        tokio::time::sleep(Duration::from_millis(1)).await;
+        addr.try_send(()).unwrap();
+        assert!(!rx.await.unwrap());
+    }
 
     #[tokio::test]
     async fn downcast() {

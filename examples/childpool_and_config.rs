@@ -6,7 +6,7 @@ use tiny_actor::*;
 async fn main() {
     // First we spawn an actor with a custom config, and an inbox which receives u32 messages.
     // This will spawn 3 processes, with i = {0, 1, 2}.
-    let (pool, address) = spawn_many(
+    let (mut pool, address) = spawn_many(
         0..3,
         Config {
             link: Link::Attached(Duration::from_secs(1)),
@@ -43,11 +43,10 @@ async fn main() {
         address.send(num).await.unwrap()
     }
 
-    // And halt the actor
-    pool.halt();
 
+    // And finally shut the actor down (by halting)
     // Now we can await all processes (using `futures::StreamExt::collect`)
-    let exits = pool.collect::<Vec<_>>().await;
+    let exits = pool.shutdown(Duration::from_secs(1)).collect::<Vec<_>>().await;
 
     // And assert that every exit is `Ok("Halt")`
     for exit in exits {

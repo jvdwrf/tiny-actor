@@ -1,7 +1,14 @@
 use crate::*;
 use futures::{Future, FutureExt, Stream, StreamExt};
-use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
-use tokio::task::JoinHandle;
+use std::{
+    fmt::Debug,
+    mem::ManuallyDrop,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
+use tokio::{task::JoinHandle, time::Sleep};
 
 /// A child-pool is the non clone-able reference to an actor with a multiple processes.
 ///
@@ -151,24 +158,24 @@ where
         }
     }
 
-    /// Halts the actor, and then waits for it to exit. This will always wait for ALL
-    /// processes to exit, and the channel is closed after usage.
+    /// Halts the actor, and then returns a stream that waits for exits.
     ///
-    /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub async fn shutdown(&mut self, timeout: Duration) -> Vec<Result<E, ExitError>> {
-        self.halt();
-
-        let mut results = self
-            .take_until(tokio::time::sleep(timeout))
-            .collect::<Vec<_>>()
-            .await;
-
-        if self.handle_count() > 0 {
-            self.abort();
-            results.extend(self.collect::<Vec<_>>().await);
-        }
-
-        results
+    /// If the timeout expires before all processes have exited, the actor will be aborted.
+    /// 
+    /// # Examples
+    /// ```no_run
+    /// # use tiny_actor::*;
+    /// # use std::time::Duration;
+    /// # #[tokio::main]
+    /// # async fn main() {
+    /// use futures::StreamExt;
+    /// 
+    /// let mut pool: ChildPool<()> = todo!();
+    /// let exits: Vec<_> = pool.shutdown(Duration::from_secs(1)).collect().await;
+    /// # }
+    /// ```
+    pub fn shutdown(&mut self, timeout: Duration) -> ShutdownPool<'_, E, C> {
+        ShutdownPool::new(self, timeout)
     }
 
     gen::dyn_channel_methods!();
@@ -284,11 +291,45 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     }
 }
 
+/// Stream returned when shutting down a [ChildPool].
+/// 
+/// This stream can be collected into a vec with [StreamExt::collect]:
+pub struct ShutdownPool<'a, E: Send + 'static, C: DynChannel + ?Sized> {
+    pool: &'a mut ChildPool<E, C>,
+    sleep: Option<Pin<Box<Sleep>>>, // todo: remove box with pin_project!
+}
+
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPool<'a, E, C> {
+    fn new(pool: &'a mut ChildPool<E, C>, timeout: Duration) -> Self {
+        pool.halt();
+
+        ShutdownPool {
+            pool,
+            sleep: Some(Box::pin(tokio::time::sleep(timeout))),
+        }
+    }
+}
+
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPool<'a, E, C> {
+    type Item = Result<E, ExitError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(sleep) = &mut self.sleep {
+            if sleep.poll_unpin(cx).is_ready() {
+                self.sleep = None;
+                self.pool.abort();
+            }
+        };
+
+        self.pool.poll_next_unpin(cx)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
-
     use futures::future::pending;
+    use futures::{FutureExt, StreamExt};
+    use std::time::Duration;
 
     use crate::*;
 
@@ -330,7 +371,10 @@ mod test {
     async fn shutdown_success() {
         let (mut child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
 
-        let results = child.shutdown(Duration::from_millis(5)).await;
+        let results = child
+            .shutdown(Duration::from_millis(5))
+            .collect::<Vec<_>>()
+            .await;
         assert_eq!(results.len(), 3);
 
         for result in results {
@@ -345,7 +389,10 @@ mod test {
                 pending::<()>().await;
             });
 
-        let results = child.shutdown(Duration::from_millis(5)).await;
+        let results = child
+            .shutdown(Duration::from_millis(5))
+            .collect::<Vec<_>>()
+            .await;
         assert_eq!(results.len(), 3);
 
         for result in results {
@@ -368,7 +415,10 @@ mod test {
             .unwrap();
         child.spawn(basic_actor!()).unwrap();
 
-        let results = child.shutdown(Duration::from_millis(5)).await;
+        let results = child
+            .shutdown(Duration::from_millis(5))
+            .collect::<Vec<_>>()
+            .await;
 
         let successes = results.iter().filter(|res| res.is_ok()).count();
         let failures = results.iter().filter(|res| res.is_err()).count();

@@ -1,7 +1,7 @@
 use crate::*;
-use futures::{Future, FutureExt};
-use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, time::Duration};
-use tokio::task::JoinHandle;
+use futures::{pin_mut, Future, FutureExt};
+use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, sync::Arc, task::Poll, time::Duration};
+use tokio::{task::JoinHandle, time::Sleep};
 
 /// A child is the non clone-able reference to an actor with a single process.
 ///
@@ -111,16 +111,8 @@ where
     /// result of the task, and closes the channel.
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub async fn shutdown(&mut self, timeout: Duration) -> Result<E, ExitError> {
-        self.halt();
-
-        match tokio::time::timeout(timeout, &mut *self).await {
-            Ok(res) => res,
-            Err(_) => {
-                self.abort();
-                self.await
-            }
-        }
+    pub fn shutdown(&mut self, timeout: Duration) -> Shutdown<'_, E, C> {
+        Shutdown::new(self, timeout)
     }
 
     /// Get a new [Address] to the [Channel].
@@ -132,6 +124,8 @@ where
     gen::child_methods!();
     gen::dyn_channel_methods!();
 }
+
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Unpin for Shutdown<'a, E, C> {}
 
 impl<E, M> Child<E, Channel<M>>
 where
@@ -209,6 +203,44 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
             .unwrap()
             .poll_unpin(cx)
             .map_err(|e| e.into())
+    }
+}
+
+pub struct Shutdown<'a, E: Send + 'static, C: DynChannel + ?Sized> {
+    child: &'a mut Child<E, C>,
+    sleep: Option<Pin<Box<Sleep>>>, // todo: remove box with pin_project!
+}
+
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Shutdown<'a, E, C> {
+    fn new(child: &'a mut Child<E, C>, timeout: Duration) -> Self {
+        child.halt();
+
+        Shutdown {
+            child,
+            sleep: Some(Box::pin(tokio::time::sleep(timeout))),
+        }
+    }
+}
+
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for Shutdown<'a, E, C> {
+    type Output = Result<E, ExitError>;
+
+    fn poll(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.child.poll_unpin(cx) {
+            Poll::Ready(res) => Poll::Ready(res),
+            Poll::Pending => {
+                if let Some(sleep) = &mut self.sleep {
+                    if sleep.poll_unpin(cx).is_ready() {
+                        self.sleep = None;
+                        self.child.abort();
+                    }
+                };
+                Poll::Pending
+            }
+        }
     }
 }
 

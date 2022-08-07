@@ -36,7 +36,6 @@ pub enum TryRecvError {
     /// messages to be sent to the channel.
     #[error("Couldn't receive becuase the channel is closed and empty")]
     ClosedAndEmpty,
-
 }
 
 /// An error returned when trying to send a message into a channel.

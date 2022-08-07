@@ -1,6 +1,6 @@
-macro_rules! test_loop {
+macro_rules! basic_actor {
     () => {
-        crate::_priv::test_helper::test_loop!(())
+        crate::_priv::test_helper::basic_actor!(())
     };
     ($ty:ty) => {
         |mut inbox: Inbox<$ty>| async move {
@@ -13,11 +13,11 @@ macro_rules! test_loop {
         }
     };
 }
-pub(crate) use test_loop;
+pub(crate) use basic_actor;
 
-macro_rules! test_many_loop {
+macro_rules! pooled_basic_actor {
     () => {
-        crate::_priv::test_helper::test_many_loop!(())
+        crate::_priv::test_helper::pooled_basic_actor!(())
     };
     ($ty:ty) => {
         |_, mut inbox: Inbox<$ty>| async move {
@@ -30,4 +30,4 @@ macro_rules! test_many_loop {
         }
     };
 }
-pub(crate) use test_many_loop;
+pub(crate) use pooled_basic_actor;

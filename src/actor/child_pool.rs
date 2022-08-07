@@ -1,7 +1,7 @@
 use crate::*;
-use futures::{Future, FutureExt, Stream};
-use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, sync::Arc, task::Poll, time::Duration};
-use tokio::{task::JoinHandle, time::Sleep};
+use futures::{Future, FutureExt, Stream, StreamExt};
+use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
+use tokio::task::JoinHandle;
 
 /// A child-pool is the non clone-able reference to an actor with a multiple processes.
 ///
@@ -154,12 +154,20 @@ where
     /// Halts the actor, and then waits for it to exit.
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub fn shutdown(self, timer: Duration) -> ShutdownPoolFut<E, C> {
-        ShutdownPoolFut {
-            sleep: Some(Box::pin(tokio::time::sleep(timer))),
-            child_pool: self,
-            exits: Some(Vec::new()),
+    pub async fn shutdown(mut self, timeout: Duration) -> Vec<Result<E, ExitError>> {
+        self.halt();
+
+        let mut results = (&mut self)
+            .take_until(tokio::time::sleep(timeout))
+            .collect::<Vec<_>>()
+            .await;
+
+        if self.handle_count() > 0 {
+            self.abort();
+            results.extend(self.collect::<Vec<_>>().await);
         }
+
+        results
     }
 
     gen::dyn_channel_methods!();
@@ -275,55 +283,95 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     }
 }
 
-#[derive(Debug)]
-pub struct ShutdownPoolFut<E: Send + 'static, C: DynChannel + ?Sized> {
-    sleep: Option<Pin<Box<Sleep>>>,
-    child_pool: ChildPool<E, C>,
-    exits: Option<Vec<Result<E, ExitError>>>,
-}
+#[cfg(test)]
+mod test {
+    use std::time::Duration;
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownPoolFut<E, C> {
-    type Output = Vec<Result<E, ExitError>>;
+    use futures::future::pending;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let mut_self = &mut *self;
+    use crate::*;
 
-        let new_exits = mut_self
-            .child_pool
-            .handles
-            .as_mut()
-            .unwrap()
-            .iter_mut()
-            .enumerate()
-            .filter_map(|(i, handle)| {
-                if let Poll::Ready(exit) = handle.poll_unpin(cx) {
-                    mut_self
-                        .exits
-                        .as_mut()
-                        .unwrap()
-                        .push(exit.map_err(Into::into));
-                    Some(i)
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+    #[tokio::test]
+    async fn downcast() {
+        let (pool, _addr) = spawn_many(0..5, Config::default(), pooled_basic_actor!());
+        assert!(matches!(pool.into_dyn().downcast::<()>(), Ok(_)));
+    }
 
-        for i in new_exits.into_iter().rev() {
-            mut_self.child_pool.handles.as_mut().unwrap().swap_remove(i);
-        }
+    #[tokio::test]
+    async fn spawn_ok() {
+        let (mut child, _addr) = spawn_one(Config::default(), basic_actor!());
+        assert!(child.spawn(basic_actor!()).is_ok());
+        assert!(child.into_dyn().try_spawn(basic_actor!()).is_ok());
+    }
 
-        if mut_self.child_pool.handle_count() == 0 {
-            Poll::Ready(self.exits.take().unwrap())
-        } else {
-            if let Some(sleep) = &mut self.sleep {
-                if let Poll::Ready(()) = sleep.poll_unpin(cx) {
-                    self.child_pool.abort();
-                }
-            };
-            Poll::Pending
+    #[tokio::test]
+    async fn spawn_err_exit() {
+        let (mut child, addr) = spawn_one(Config::default(), basic_actor!());
+        addr.halt();
+        addr.await;
+        assert!(matches!(child.spawn(basic_actor!()), Err(SpawnError(_))));
+        assert!(matches!(
+            child.into_dyn().try_spawn(basic_actor!()),
+            Err(TrySpawnError::Exited(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn spawn_err_incorrect_type() {
+        let (child, _addr) = spawn_one(Config::default(), basic_actor!(u32));
+        assert!(matches!(
+            child.into_dyn().try_spawn(basic_actor!(u64)),
+            Err(TrySpawnError::IncorrectType(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn shutdown_success() {
+        let (child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
+
+        let results = child.shutdown(Duration::from_millis(5)).await;
+        assert_eq!(results.len(), 3);
+
+        for result in results {
+            assert!(result.is_ok());
         }
     }
-}
 
-impl<E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownPoolFut<E, C> {}
+    #[tokio::test]
+    async fn shutdown_failure() {
+        let (child, _addr) = spawn_many(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
+            pending::<()>().await;
+        });
+
+        let results = child.shutdown(Duration::from_millis(5)).await;
+        assert_eq!(results.len(), 3);
+
+        for result in results {
+            assert!(matches!(result, Err(ExitError::Abort)));
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_mixed() {
+        let (mut child, _addr) = spawn_one(Config::default(), |_inbox: Inbox<()>| async move {
+            pending::<()>().await;
+            unreachable!()
+        });
+        child.spawn(basic_actor!()).unwrap();
+        child
+            .spawn(|_inbox: Inbox<()>| async move {
+                pending::<()>().await;
+                unreachable!()
+            })
+            .unwrap();
+        child.spawn(basic_actor!()).unwrap();
+
+        let results = child.shutdown(Duration::from_millis(5)).await;
+
+        let successes = results.iter().filter(|res| res.is_ok()).count();
+        let failures = results.iter().filter(|res| res.is_err()).count();
+
+        assert_eq!(successes, 2);
+        assert_eq!(failures, 2);
+    }
+}

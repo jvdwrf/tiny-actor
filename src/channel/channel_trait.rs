@@ -74,7 +74,7 @@ impl<M> DynChannel for Channel<M> {
                 }
             })
             .unwrap();
-        
+
         self.recv_event.notify(usize::MAX);
     }
 

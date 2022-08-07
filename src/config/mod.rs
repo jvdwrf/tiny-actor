@@ -159,7 +159,7 @@ impl BackPressure {
     ///
     /// The timeout is calculated as follows:
     /// `timeout = timeout * (msg_count - start_at)`
-    /// 
+    ///
     /// # Panics
     /// Panics if the `timeout` is bigger than `213_503 days`.
     pub fn linear(starts_at: usize, timeout: Duration) -> Self {
@@ -253,7 +253,10 @@ mod test {
         let bp = BackPressure::exponential(10, Duration::from_secs(1), 1.1);
 
         assert_eq!(bp.get_timeout(9), None);
-        assert_eq!(bp.get_timeout(10), Some(Duration::from_nanos(1_000_000_000)));
+        assert_eq!(
+            bp.get_timeout(10),
+            Some(Duration::from_nanos(1_000_000_000))
+        );
     }
 
     #[test]

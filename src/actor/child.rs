@@ -4,15 +4,15 @@ use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, time::Duration};
 use tokio::task::JoinHandle;
 
 /// A child is the non clone-able reference to an actor with a single process.
-/// 
+///
 /// Children can be of two forms:
-/// * `Child<E, Channel<M>>`: This is the default form, it can be transformed into a `Child<E>` using 
+/// * `Child<E, Channel<M>>`: This is the default form, it can be transformed into a `Child<E>` using
 /// [Child::into_dyn].
-/// * `Child<E>`: This form is a dynamic child, it can be transformed back into a `Child<E, Channel<M>>` 
+/// * `Child<E>`: This form is a dynamic child, it can be transformed back into a `Child<E, Channel<M>>`
 /// using [Child::downcast::<M>].
-/// 
+///
 /// A child can be transformed into a [ChildPool] using [Child::into_pool()].
-/// 
+///
 /// A child can be awaited which returns the parameter `E` once the actor exits.
 #[derive(Debug)]
 pub struct Child<E, C = dyn AnyChannel>
@@ -112,12 +112,10 @@ where
     /// If the timeout expires before the actor has exited, the actor will be aborted.
     pub async fn shutdown(mut self, timeout: Duration) -> Result<E, ExitError> {
         self.halt();
-        tokio::select! {
-            exit = (&mut self) => {
-                exit
-            }
 
-            _ = tokio::time::sleep(timeout) => {
+        match tokio::time::timeout(timeout, &mut self).await {
+            Ok(res) => res,
+            Err(_) => {
                 self.abort();
                 self.await
             }
@@ -215,68 +213,61 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
 
 #[cfg(test)]
 mod test {
-    use std::time::Duration;
+    use std::{future::pending, time::Duration};
 
     use crate::*;
 
     #[tokio::test]
-    async fn downcast_child() {
-        let (child, _addr) = spawn(Config::default(), test_loop!());
+    async fn downcast() {
+        let (child, _addr) = spawn(Config::default(), basic_actor!());
         assert!(matches!(child.into_dyn().downcast::<()>(), Ok(_)));
-
-        let (pool, _addr) = spawn_many(0..5, Config::default(), test_many_loop!());
-        assert!(matches!(pool.into_dyn().downcast::<()>(), Ok(_)));
     }
 
     #[tokio::test]
-    async fn child_try_spawn_ok() {
-        let (child, _addr) = spawn_one(Config::default(), test_loop!());
-        tokio::time::sleep(Duration::from_millis(1)).await;
-        let mut child = child.into_dyn();
-        child.try_spawn(test_loop!()).unwrap();
-        assert_eq!(child.process_count(), 2);
+    async fn abort() {
+        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        assert!(!child.is_aborted());
+        child.abort();
+        assert!(child.is_aborted());
+        assert!(matches!(child.await, Err(ExitError::Abort)));
     }
 
     #[tokio::test]
-    async fn child_try_spawn_exited() {
-        let (child, mut addr) = spawn_one(Config::default(), test_loop!());
-        addr.halt();
-        (&mut addr).await;
-
-        let res = child.into_dyn().try_spawn(test_loop!());
-
-        assert!(matches!(res, Err(TrySpawnError::Exited(_))));
-        assert_eq!(addr.process_count(), 0);
+    async fn is_finished() {
+        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        child.abort();
+        let _ = (&mut child).await;
+        assert!(child.is_finished());
     }
 
     #[tokio::test]
-    async fn child_try_spawn_incorrect_type() {
-        let (child, addr) = spawn_one(Config::default(), test_loop!());
-        let res = child.into_dyn().try_spawn(test_loop!(u32));
+    async fn into_childpool() {
+        let (child, _addr) = spawn(Config::default(), basic_actor!());
+        let pool = child.into_pool();
+        assert_eq!(pool.task_count(), 1);
+        assert_eq!(pool.process_count(), 1);
+        assert_eq!(pool.is_aborted(), false);
 
-        println!("{res:?}");
-
-        assert!(matches!(res, Err(TrySpawnError::IncorrectType(_))));
-        assert_eq!(addr.process_count(), 1);
+        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        child.abort();
+        let pool = child.into_pool();
+        assert_eq!(pool.is_aborted(), true);
     }
 
     #[tokio::test]
-    async fn child_spawn_ok() {
-        let (child, _addr) = spawn_one(Config::default(), test_loop!());
-        let mut child = child.into_dyn();
-        child.try_spawn(test_loop!()).unwrap();
-        assert_eq!(child.process_count(), 2);
+    async fn shutdown_success() {
+        let (child, _addr) = spawn(Config::default(), basic_actor!());
+        assert!(child.shutdown(Duration::from_millis(5)).await.is_ok());
     }
 
     #[tokio::test]
-    async fn child_spawn_exited() {
-        let (mut child, mut addr) = spawn_one(Config::default(), test_loop!());
-        addr.halt();
-        (&mut addr).await;
-
-        let res = child.spawn(test_loop!());
-
-        assert!(matches!(res, Err(SpawnError(_))));
-        assert_eq!(addr.process_count(), 0);
+    async fn shutdown_failure() {
+        let (child, _addr) = spawn(Config::default(), |_inbox: Inbox<()>| async {
+            pending::<()>().await;
+        });
+        assert!(matches!(
+            child.shutdown(Duration::from_millis(5)).await,
+            Err(ExitError::Abort)
+        ));
     }
 }

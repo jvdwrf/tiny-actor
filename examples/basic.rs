@@ -1,5 +1,5 @@
-use tiny_actor::*;
 use std::time::Duration;
+use tiny_actor::*;
 
 #[tokio::main]
 async fn main() {
@@ -35,7 +35,7 @@ async fn main() {
         Ok(exit) => {
             assert_eq!(exit, "Halt");
             println!("actor exited with message: {exit}")
-        },
+        }
         Err(error) => match error {
             ExitError::Panic(_) => todo!(),
             ExitError::Abort => todo!(),

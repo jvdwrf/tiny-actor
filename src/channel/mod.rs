@@ -215,7 +215,7 @@ mod test {
 
     use super::{next_actor_id, Channel};
     use crate::*;
-    use concurrent_queue::{PushError, PopError};
+    use concurrent_queue::{PopError, PushError};
     use event_listener::EventListener;
     use futures::FutureExt;
 
@@ -366,7 +366,7 @@ mod test {
     #[tokio::test]
     async fn immedeate_halt() {
         for i in 0..100 {
-            let (_child, address) = spawn(Config::default(), test_loop!());
+            let (_child, address) = spawn(Config::default(), basic_actor!());
             spin_sleep::sleep(Duration::from_nanos(i));
             address.halt();
             address.await;

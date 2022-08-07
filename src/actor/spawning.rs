@@ -3,7 +3,7 @@ use futures::Future;
 use std::sync::Arc;
 
 /// Spawn a new actor with a single process, this returns a [Child] and an [Address].
-/// 
+///
 /// # Example
 /// ```no_run
 ///# use tiny_actor::*;
@@ -40,7 +40,7 @@ where
 }
 
 /// Spawn a new actor with a single process, this returns a [Child] and an [Address].
-/// 
+///
 /// This is the same as [spawn], but returns a [ChildPool] instead of a [Child].
 ///
 /// # Example
@@ -79,7 +79,7 @@ where
 }
 
 /// Spawn a new actor with a multiple process, this returns a [ChildPool] and an [Address].
-/// 
+///
 /// The iterator will be passed along as the first argument to every spawned function.
 ///
 /// # Example

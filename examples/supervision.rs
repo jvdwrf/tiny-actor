@@ -23,7 +23,6 @@ async fn main() {
 
     // And spawn the supervisor task
     tokio::task::spawn(async move {
-
         // which registers the address under the name "MyAddress"
         register_address(&clone_registered, "MyAddress", clone_address);
 
@@ -78,7 +77,7 @@ fn spawn_actor() -> (
                 Err(e) => {
                     println!("Actor -- received error: \"{:?}\", exiting.", e);
                     break e;
-                },
+                }
             }
         }
     })

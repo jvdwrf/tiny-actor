@@ -1,11 +1,11 @@
 use event_listener::EventListener;
-use futures::{FutureExt, Stream, stream::FusedStream};
+use futures::{stream::FusedStream, FutureExt, Stream};
 
 use crate::*;
 use std::{fmt::Debug, sync::Arc};
 
 /// An Inbox is a non clone-able receiver part of a channel.
-/// 
+///
 /// An Inbox is mostly used to receive messages, with [Inbox::recv], [Inbox::try_recv] or
 /// [futures::Stream].
 #[derive(Debug)]

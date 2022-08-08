@@ -1,7 +1,7 @@
 use crate::*;
 use futures::{Future, FutureExt};
-use std::{fmt::Debug, mem::ManuallyDrop, pin::Pin, sync::Arc, task::Poll, time::Duration};
-use tokio::{task::JoinHandle, time::Sleep};
+use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, time::Duration};
+use tokio::task::JoinHandle;
 
 /// A child is the non clone-able reference to an actor with a single process.
 ///
@@ -206,51 +206,11 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
     }
 }
 
-pub struct Shutdown<'a, E: Send + 'static, C: DynChannel + ?Sized> {
-    child: &'a mut Child<E, C>,
-    sleep: Option<Pin<Box<Sleep>>>,
-}
-
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Shutdown<'a, E, C> {
-    fn new(child: &'a mut Child<E, C>, timeout: Duration) -> Self {
-        child.halt();
-
-        Shutdown {
-            child,
-            sleep: Some(Box::pin(tokio::time::sleep(timeout))),
-        }
-    }
-}
-
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for Shutdown<'a, E, C> {
-    type Output = Result<E, ExitError>;
-
-    fn poll(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        match self.child.poll_unpin(cx) {
-            Poll::Ready(res) => Poll::Ready(res),
-            Poll::Pending => {
-                if let Some(sleep) = &mut self.sleep {
-                    if sleep.poll_unpin(cx).is_ready() {
-                        self.sleep = None;
-                        self.child.abort();
-                    }
-                };
-                Poll::Pending
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use std::{future::pending, time::Duration};
-
-    use tokio::sync::oneshot;
-
     use crate::*;
+    use std::{future::pending, time::Duration};
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn dropping() {
@@ -335,22 +295,5 @@ mod test {
         child.abort();
         let pool = child.into_pool();
         assert_eq!(pool.is_aborted(), true);
-    }
-
-    #[tokio::test]
-    async fn shutdown_success() {
-        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
-        assert!(child.shutdown(Duration::from_millis(5)).await.is_ok());
-    }
-
-    #[tokio::test]
-    async fn shutdown_failure() {
-        let (mut child, _addr) = spawn(Config::default(), |_inbox: Inbox<()>| async {
-            pending::<()>().await;
-        });
-        assert!(matches!(
-            child.shutdown(Duration::from_millis(5)).await,
-            Err(ExitError::Abort)
-        ));
     }
 }

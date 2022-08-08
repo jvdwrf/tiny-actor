@@ -1,14 +1,7 @@
 use crate::*;
-use futures::{Future, FutureExt, Stream, StreamExt};
-use std::{
-    fmt::Debug,
-    mem::ManuallyDrop,
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
-use tokio::{task::JoinHandle, time::Sleep};
+use futures::{Future, FutureExt, Stream};
+use std::{fmt::Debug, mem::ManuallyDrop, sync::Arc, task::Poll, time::Duration};
+use tokio::task::JoinHandle;
 
 /// A child-pool is the non clone-able reference to an actor with a multiple processes.
 ///
@@ -291,48 +284,12 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
     }
 }
 
-/// Stream returned when shutting down a [ChildPool].
-///
-/// This stream can be collected into a vec with [StreamExt::collect]:
-pub struct ShutdownPool<'a, E: Send + 'static, C: DynChannel + ?Sized> {
-    pool: &'a mut ChildPool<E, C>,
-    sleep: Option<Pin<Box<Sleep>>>,
-}
-
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPool<'a, E, C> {
-    fn new(pool: &'a mut ChildPool<E, C>, timeout: Duration) -> Self {
-        pool.halt();
-
-        ShutdownPool {
-            pool,
-            sleep: Some(Box::pin(tokio::time::sleep(timeout))),
-        }
-    }
-}
-
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPool<'a, E, C> {
-    type Item = Result<E, ExitError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        if let Some(sleep) = &mut self.sleep {
-            if sleep.poll_unpin(cx).is_ready() {
-                self.sleep = None;
-                self.pool.abort();
-            }
-        };
-
-        self.pool.poll_next_unpin(cx)
-    }
-}
-
 #[cfg(test)]
 mod test {
+    use crate::*;
     use futures::future::pending;
-    use futures::StreamExt;
     use std::sync::atomic::{AtomicU8, Ordering};
     use std::time::Duration;
-
-    use crate::*;
 
     #[tokio::test]
     async fn dropping() {
@@ -426,65 +383,5 @@ mod test {
             child.into_dyn().try_spawn(basic_actor!(u64)),
             Err(TrySpawnError::IncorrectType(_))
         ));
-    }
-
-    #[tokio::test]
-    async fn shutdown_success() {
-        let (mut child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
-
-        let results = child
-            .shutdown(Duration::from_millis(5))
-            .collect::<Vec<_>>()
-            .await;
-        assert_eq!(results.len(), 3);
-
-        for result in results {
-            assert!(result.is_ok());
-        }
-    }
-
-    #[tokio::test]
-    async fn shutdown_failure() {
-        let (mut child, _addr) =
-            spawn_many(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
-                pending::<()>().await;
-            });
-
-        let results = child
-            .shutdown(Duration::from_millis(5))
-            .collect::<Vec<_>>()
-            .await;
-        assert_eq!(results.len(), 3);
-
-        for result in results {
-            assert!(matches!(result, Err(ExitError::Abort)));
-        }
-    }
-
-    #[tokio::test]
-    async fn shutdown_mixed() {
-        let (mut child, _addr) = spawn_one(Config::default(), |_inbox: Inbox<()>| async move {
-            pending::<()>().await;
-            unreachable!()
-        });
-        child.spawn(basic_actor!()).unwrap();
-        child
-            .spawn(|_inbox: Inbox<()>| async move {
-                pending::<()>().await;
-                unreachable!()
-            })
-            .unwrap();
-        child.spawn(basic_actor!()).unwrap();
-
-        let results = child
-            .shutdown(Duration::from_millis(5))
-            .collect::<Vec<_>>()
-            .await;
-
-        let successes = results.iter().filter(|res| res.is_ok()).count();
-        let failures = results.iter().filter(|res| res.is_err()).count();
-
-        assert_eq!(successes, 2);
-        assert_eq!(failures, 2);
     }
 }

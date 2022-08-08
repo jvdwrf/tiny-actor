@@ -296,7 +296,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Drop for ChildPool<E, C> {
 /// This stream can be collected into a vec with [StreamExt::collect]:
 pub struct ShutdownPool<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     pool: &'a mut ChildPool<E, C>,
-    sleep: Option<Pin<Box<Sleep>>>, // todo: remove box with pin_project!
+    sleep: Option<Pin<Box<Sleep>>>,
 }
 
 impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPool<'a, E, C> {
@@ -327,7 +327,6 @@ impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPool<'a, 
 
 #[cfg(test)]
 mod test {
-    use futures::channel::oneshot;
     use futures::future::pending;
     use futures::StreamExt;
     use std::sync::atomic::{AtomicU8, Ordering};

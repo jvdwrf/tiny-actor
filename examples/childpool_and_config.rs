@@ -43,10 +43,11 @@ async fn main() {
         address.send(num).await.unwrap()
     }
 
-
-    // And finally shut the actor down (by halting)
-    // Now we can await all processes (using `futures::StreamExt::collect`)
-    let exits = pool.shutdown(Duration::from_secs(1)).collect::<Vec<_>>().await;
+    // And finally shut the actor down, giving it 1 second before aborting.
+    let exits = pool
+        .shutdown(Duration::from_secs(1))
+        .collect::<Vec<_>>() // Await all processes (using `futures::StreamExt::collect`)
+        .await;
 
     // And assert that every exit is `Ok("Halt")`
     for exit in exits {

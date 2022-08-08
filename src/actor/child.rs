@@ -208,7 +208,7 @@ impl<E: Send + 'static, C: DynChannel + ?Sized> Future for Child<E, C> {
 
 pub struct Shutdown<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     child: &'a mut Child<E, C>,
-    sleep: Option<Pin<Box<Sleep>>>, // todo: remove box with pin_project!
+    sleep: Option<Pin<Box<Sleep>>>,
 }
 
 impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Shutdown<'a, E, C> {

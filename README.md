@@ -81,13 +81,13 @@ Every actor has a unique id generated when it is spawned, this `actor_id` can no
 
 ## Basic example
 ```rust
-use tiny_actor::*;
 use std::time::Duration;
+use tiny_actor::*;
 
 #[tokio::main]
 async fn main() {
     // First we spawn an actor with a default config, and an inbox which receives u32 messages.
-    let (child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
+    let (mut child, address) = spawn(Config::default(), |mut inbox: Inbox<u32>| async move {
         loop {
             // This loops and receives messages
             match inbox.recv().await {
@@ -112,32 +112,33 @@ async fn main() {
 
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // And finally halt the actor for a graceful exit.
-    child.halt();
-    match child.await {
+    // And finally shut the actor down, 
+    // we give it 1 second to exit before aborting it.
+    match child.shutdown(Duration::from_secs(1)).await {
         Ok(exit) => {
             assert_eq!(exit, "Halt");
             println!("actor exited with message: {exit}")
-        },
+        }
         Err(error) => match error {
             ExitError::Panic(_) => todo!(),
             ExitError::Abort => todo!(),
         },
     }
 }
+
 ```
 
 ## Example with ChildPool and custom Config
 ```rust
-use tiny_actor::*;
-use std::time::Duration;
 use futures::stream::StreamExt;
+use std::time::Duration;
+use tiny_actor::*;
 
 #[tokio::main]
 async fn main() {
     // First we spawn an actor with a custom config, and an inbox which receives u32 messages.
     // This will spawn 3 processes, with i = {0, 1, 2}.
-    let (pool, address) = spawn_many(
+    let (mut pool, address) = spawn_many(
         0..3,
         Config {
             link: Link::Attached(Duration::from_secs(1)),
@@ -174,11 +175,11 @@ async fn main() {
         address.send(num).await.unwrap()
     }
 
-    // And halt the actor
-    pool.halt();
-
-    // Now we can await all processes (using `futures::StreamExt::collect`)
-    let exits = pool.collect::<Vec<_>>().await;
+    // And finally shut the actor down, giving it 1 second before aborting.
+    let exits = pool
+        .shutdown(Duration::from_secs(1))
+        .collect::<Vec<_>>() // Await all processes (using `futures::StreamExt::collect`)
+        .await;
 
     // And assert that every exit is `Ok("Halt")`
     for exit in exits {
@@ -194,4 +195,5 @@ async fn main() {
         }
     }
 }
+
 ```

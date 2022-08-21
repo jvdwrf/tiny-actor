@@ -13,7 +13,7 @@ pub trait DynChannel {
     fn close(&self) -> bool;
     fn halt_some(&self, n: u32);
     fn halt(&self);
-    fn inbox_count(&self) -> usize;
+    fn process_count(&self) -> usize;
     fn msg_count(&self) -> usize;
     fn address_count(&self) -> usize;
     fn is_closed(&self) -> bool;
@@ -77,7 +77,7 @@ impl<M> DynChannel for Channel<M> {
     }
 
     /// Returns the amount of inboxes this channel has.
-    fn inbox_count(&self) -> usize {
+    fn process_count(&self) -> usize {
         self.inbox_count.load(Ordering::Acquire)
     }
 

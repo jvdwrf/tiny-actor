@@ -268,13 +268,13 @@ mod test {
     #[test]
     fn adding_removing_inboxes() {
         let channel = Channel::<()>::new(1, 1, Capacity::default());
-        assert_eq!(channel.inbox_count(), 1);
+        assert_eq!(channel.process_count(), 1);
         channel.try_add_inbox().unwrap();
-        assert_eq!(channel.inbox_count(), 2);
+        assert_eq!(channel.process_count(), 2);
         channel.remove_inbox();
-        assert_eq!(channel.inbox_count(), 1);
+        assert_eq!(channel.process_count(), 1);
         channel.remove_inbox();
-        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.process_count(), 0);
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod test {
 
         assert!(channel.is_closed());
         assert!(channel.has_exited());
-        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.process_count(), 0);
         assert_eq!(channel.address_count(), 1);
         assert_eq!(channel.push_msg(()), Err(PushError::Closed(())));
         assert_eq!(channel.pop_msg(), Err(PopError::Closed));
@@ -332,7 +332,7 @@ mod test {
         assert!(!channel.is_closed());
         assert!(!channel.has_exited());
         assert_eq!(channel.address_count(), 0);
-        assert_eq!(channel.inbox_count(), 1);
+        assert_eq!(channel.process_count(), 1);
         assert_eq!(channel.push_msg(()), Ok(()));
         listeners.assert_notified(Assert {
             recv: 1,
@@ -378,7 +378,7 @@ mod test {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         assert_eq!(channel.try_add_inbox(), Err(()));
-        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.process_count(), 0);
     }
 
     #[test]
@@ -386,7 +386,7 @@ mod test {
         let channel = Channel::<Arc<()>>::new(1, 1, Capacity::default());
         channel.remove_inbox();
         assert!(matches!(channel.try_add_inbox(), Err(_)));
-        assert_eq!(channel.inbox_count(), 0);
+        assert_eq!(channel.process_count(), 0);
     }
 
     #[test]

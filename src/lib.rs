@@ -5,8 +5,9 @@ pub mod actor;
 pub mod channel;
 pub mod config;
 pub mod errors;
+mod messaging;
 
 pub(crate) use _priv::gen;
 #[cfg(test)]
 pub(crate) use _priv::test_helper::*;
-pub use {actor::*, channel::*, config::*, errors::*};
+pub use {actor::*, channel::*, config::*, errors::*, messaging::*};

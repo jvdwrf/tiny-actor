@@ -19,7 +19,7 @@ macro_rules! dyn_channel_methods {
 
         /// Get the amount of processes.
         pub fn process_count(&self) -> usize {
-            self.channel.inbox_count()
+            self.channel.process_count()
         }
 
         /// Get the amount of messages in the [Channel].

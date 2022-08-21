@@ -54,7 +54,7 @@ where
     /// Get the underlying [JoinHandle].
     ///
     /// This will not run the drop, and therefore the actor will not be halted/aborted.
-    pub fn into_tokio_joinhandle(self) -> JoinHandle<E> {
+    pub fn into_joinhandle(self) -> JoinHandle<E> {
         self.into_parts().1
     }
 
@@ -113,12 +113,6 @@ where
     /// If the timeout expires before the actor has exited, the actor will be aborted.
     pub fn shutdown(&mut self, timeout: Duration) -> Shutdown<'_, E, C> {
         Shutdown::new(self, timeout)
-    }
-
-    /// Get a new [Address] to the [Channel].
-    pub fn get_address(&self) -> Address<C> {
-        self.channel.add_address();
-        Address::from_channel(self.channel.clone())
     }
 
     gen::child_methods!();

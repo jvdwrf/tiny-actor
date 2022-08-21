@@ -100,6 +100,12 @@ pub(crate) use send_methods;
 
 macro_rules! child_methods {
     () => {
+        /// Get a new [Address] to the [Channel].
+        pub fn get_address(&self) -> Address<C> {
+            self.channel.add_address();
+            Address::from_channel(self.channel.clone())
+        }
+
         /// Attach the actor.
         ///
         /// Returns the old abort-timeout if it was already attached.

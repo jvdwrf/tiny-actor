@@ -53,7 +53,7 @@ where
     /// the order in which processes were spawned.
     ///
     /// This will not run drop, and therefore the `Actor` will not be halted/aborted.
-    pub fn into_tokio_joinhandles(self) -> Vec<JoinHandle<E>> {
+    pub fn into_joinhandles(self) -> Vec<JoinHandle<E>> {
         self.into_parts().1
     }
 

@@ -9,7 +9,7 @@ macro_rules! dyn_channel_methods {
         ///
         /// This also closes the Inbox.
         pub fn halt(&self) {
-            self.channel.halt_some(u32::MAX)
+            self.channel.halt()
         }
 
         /// Halt n processes.

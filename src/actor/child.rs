@@ -111,15 +111,15 @@ where
     /// result of the task, and closes the channel.
     ///
     /// If the timeout expires before the actor has exited, the actor will be aborted.
-    pub fn shutdown(&mut self, timeout: Duration) -> Shutdown<'_, E, C> {
-        Shutdown::new(self, timeout)
+    pub fn shutdown(&mut self, timeout: Duration) -> ShutdownFut<'_, E, C> {
+        ShutdownFut::new(self, timeout)
     }
 
     gen::child_methods!();
     gen::dyn_channel_methods!();
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Unpin for Shutdown<'a, E, C> {}
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Unpin for ShutdownFut<'a, E, C> {}
 
 impl<E, M> Child<E, Channel<M>>
 where

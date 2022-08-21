@@ -35,7 +35,7 @@ impl<M> Inbox<M> {
     }
 
     /// Wait until there is a message in the [Inbox], or until the channel is closed.
-    pub fn recv(&mut self) -> Rcv<'_, M> {
+    pub fn recv(&mut self) -> RecvFut<'_, M> {
         self.channel
             .recv(&mut self.signaled_halt, &mut self.recv_listener)
     }

@@ -86,7 +86,7 @@ macro_rules! send_methods {
         /// * In the case of an `unbounded` [Channel], when [BackPressure] returns a timeout this waits
         /// untill the timeout is over.
         /// * In the case of a `bounded` [Channel], when it is full this waits untill space is available.
-        pub fn send(&self, msg: M) -> Snd<'_, M> {
+        pub fn send(&self, msg: M) -> SendFut<'_, M> {
             self.channel.send(msg)
         }
 

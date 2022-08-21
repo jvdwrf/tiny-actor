@@ -7,23 +7,23 @@ use std::{
 };
 use tokio::time::Sleep;
 
-pub struct Shutdown<'a, E: Send + 'static, C: DynChannel + ?Sized> {
+pub struct ShutdownFut<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     child: &'a mut Child<E, C>,
     sleep: Option<Pin<Box<Sleep>>>,
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Shutdown<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownFut<'a, E, C> {
     pub(crate) fn new(child: &'a mut Child<E, C>, timeout: Duration) -> Self {
         child.halt();
 
-        Shutdown {
+        ShutdownFut {
             child,
             sleep: Some(Box::pin(tokio::time::sleep(timeout))),
         }
     }
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for Shutdown<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownFut<'a, E, C> {
     type Output = Result<E, ExitError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -45,23 +45,23 @@ impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for Shutdown<'a, E, C
 /// Stream returned when shutting down a [ChildPool].
 ///
 /// This stream can be collected into a vec with [StreamExt::collect]:
-pub struct ShutdownPool<'a, E: Send + 'static, C: DynChannel + ?Sized> {
+pub struct ShutdownPoolFut<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     pool: &'a mut ChildPool<E, C>,
     sleep: Option<Pin<Box<Sleep>>>,
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPool<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPoolFut<'a, E, C> {
     pub(crate) fn new(pool: &'a mut ChildPool<E, C>, timeout: Duration) -> Self {
         pool.halt();
 
-        ShutdownPool {
+        ShutdownPoolFut {
             pool,
             sleep: Some(Box::pin(tokio::time::sleep(timeout))),
         }
     }
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPool<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPoolFut<'a, E, C> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

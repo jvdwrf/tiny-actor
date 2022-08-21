@@ -9,8 +9,8 @@ use std::{
 use tokio::time::Sleep;
 
 impl<M> Channel<M> {
-    pub fn send(&self, msg: M) -> Snd<'_, M> {
-        Snd::new(self, msg)
+    pub fn send(&self, msg: M) -> SendFut<'_, M> {
+        SendFut::new(self, msg)
     }
 
     pub fn send_now(&self, msg: M) -> Result<(), TrySendError<M>> {
@@ -58,45 +58,45 @@ impl<M> Channel<M> {
 
 /// The send-future, this can be `.await`-ed to send the message.
 #[derive(Debug)]
-pub struct Snd<'a, M> {
+pub struct SendFut<'a, M> {
     channel: &'a Channel<M>,
     msg: Option<M>,
-    fut: Option<SndFut>,
+    fut: Option<InnerSendFut>,
 }
 
 /// Listener for a bounded channel, sleep for an unbounded channel.
 #[derive(Debug)]
-enum SndFut {
+enum InnerSendFut {
     Listener(EventListener),
     Sleep(Pin<Box<Sleep>>),
 }
 
-impl Unpin for SndFut {}
-impl Future for SndFut {
+impl Unpin for InnerSendFut {}
+impl Future for InnerSendFut {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match &mut *self {
-            SndFut::Listener(listener) => listener.poll_unpin(cx),
-            SndFut::Sleep(sleep) => sleep.poll_unpin(cx),
+            InnerSendFut::Listener(listener) => listener.poll_unpin(cx),
+            InnerSendFut::Sleep(sleep) => sleep.poll_unpin(cx),
         }
     }
 }
 
-impl<'a, M> Snd<'a, M> {
+impl<'a, M> SendFut<'a, M> {
     pub(crate) fn new(channel: &'a Channel<M>, msg: M) -> Self {
         match &channel.capacity {
-            Capacity::Bounded(_) => Snd {
+            Capacity::Bounded(_) => SendFut {
                 channel,
                 msg: Some(msg),
                 fut: None,
             },
-            Capacity::Unbounded(back_pressure) => Snd {
+            Capacity::Unbounded(back_pressure) => SendFut {
                 channel,
                 msg: Some(msg),
                 fut: back_pressure
                     .get_timeout(channel.msg_count())
-                    .map(|timeout| SndFut::Sleep(Box::pin(tokio::time::sleep(timeout)))),
+                    .map(|timeout| InnerSendFut::Sleep(Box::pin(tokio::time::sleep(timeout)))),
             },
         }
     }
@@ -121,7 +121,7 @@ impl<'a, M> Snd<'a, M> {
         loop {
             // Otherwise, we create the future if it doesn't exist yet.
             if self.fut.is_none() {
-                self.fut = Some(SndFut::Listener(self.channel.get_send_listener()))
+                self.fut = Some(InnerSendFut::Listener(self.channel.get_send_listener()))
             }
 
             try_send!(msg);
@@ -161,9 +161,9 @@ impl<'a, M> Snd<'a, M> {
     }
 }
 
-impl<'a, M> Unpin for Snd<'a, M> {}
+impl<'a, M> Unpin for SendFut<'a, M> {}
 
-impl<'a, M> Future for Snd<'a, M> {
+impl<'a, M> Future for SendFut<'a, M> {
     type Output = Result<(), SendError<M>>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {

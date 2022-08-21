@@ -29,8 +29,8 @@ impl<M> Channel<M> {
         &'a self,
         signaled_halt: &'a mut bool,
         listener: &'a mut Option<EventListener>,
-    ) -> Rcv<'a, M> {
-        Rcv {
+    ) -> RecvFut<'a, M> {
+        RecvFut {
             channel: self,
             signaled_halt,
             listener,
@@ -66,15 +66,15 @@ impl<M> Channel<M> {
 ///
 /// This can be awaited or streamed to get the messages.
 #[derive(Debug)]
-pub struct Rcv<'a, M> {
+pub struct RecvFut<'a, M> {
     channel: &'a Channel<M>,
     signaled_halt: &'a mut bool,
     listener: &'a mut Option<EventListener>,
 }
 
-impl<'a, M> Unpin for Rcv<'a, M> {}
+impl<'a, M> Unpin for RecvFut<'a, M> {}
 
-impl<'a, M> Future for Rcv<'a, M> {
+impl<'a, M> Future for RecvFut<'a, M> {
     type Output = Result<M, RecvError>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -118,7 +118,7 @@ impl<'a, M> Future for Rcv<'a, M> {
     }
 }
 
-impl<'a, M> Drop for Rcv<'a, M> {
+impl<'a, M> Drop for RecvFut<'a, M> {
     fn drop(&mut self) {
         *self.listener = None;
     }

@@ -2,14 +2,16 @@
 [![Crates.io](https://img.shields.io/crates/v/tiny-actor)](https://crates.io/crates/tiny-actor)
 [![Documentation](https://docs.rs/tiny-actor/badge.svg)](https://docs.rs/tiny-actor)
 
-Tiny-actor is a minimal and unopinionated actor framework for Rust.
+Tiny-actor is a minimal and unopinionated actor library for Rust.
 
-The main principle of tiny-actor is merging `Inbox`es with `tasks`: It's impossible to create an `Inbox` without a `task`. Following this principle allows us to buildi simple pools and supervision-trees with reliable shutdown behaviour.
+This library merges the concepts of `Inboxes` and `tasks`, which results in actors: This basic building-block allows us to build simple pools and supervision-trees with reliable shutdown behaviour.
 
-This library will not be trying out any API's similar to Actix's, instead I'm planning to build another actor-library that will use tiny-actor under the hood. This library acts as a simple way to write tokio-actors, as nicely explained [here](https://ryhl.io/blog/actors-with-tokio/).
+Tiny-actor will not be going for more advanced API's, but acts as a simple way to write well-behaving tokio-actors. (as nicely explained [here](https://ryhl.io/blog/actors-with-tokio/)) 
+
+If you're looking for a fully-fledged actor-framework, then please take a look at [Zestors](https://github.com/Zestors/zestors). It builds further on building blocks of tiny-actor.
 
 # Concepts
-The following gives a quick overview of all concepts. For more detailed information about usage, please refer to the crate [documentation](https://docs.rs/tiny-actor).
+The following gives a quick overview of all concepts of tiny-actor. For more detailed information about usage, please refer to the crate [documentation](https://docs.rs/tiny-actor).
 
 ## Channel
 A `Channel` is that which couples `Inboxes`, `Addresses` and `Children` together. Every `Channel` contains the following rust-structs: 
@@ -74,8 +76,8 @@ A `Channel` can either be `bounded` or `unbounded`.
 * A bounded `Channel` can receive messages until it's capacity has been reached. After reaching the capacity, senders must wait until space is available. 
 * An unbounded `Channel` does not have this limit, but instead applies a backpressure-algorithm: The more messages in the `Channel`, the longer the sender must wait before it is allowed to send. 
 
-## ActorId
-Every actor has a unique id generated when it is spawned, this `actor_id` can not be changed after it's creation.
+## Id
+Every actor has a unique id generated when it is spawned, this id can not be changed after it's creation.
 
 # Getting started
 

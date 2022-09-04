@@ -167,8 +167,8 @@ where
     /// let exits: Vec<_> = pool.shutdown(Duration::from_secs(1)).collect().await;
     /// # }
     /// ```
-    pub fn shutdown(&mut self, timeout: Duration) -> ShutdownPoolFut<'_, E, C> {
-        ShutdownPoolFut::new(self, timeout)
+    pub fn shutdown(&mut self, timeout: Duration) -> ShutdownStream<'_, E, C> {
+        ShutdownStream::new(self, timeout)
     }
 
     gen::dyn_channel_methods!();

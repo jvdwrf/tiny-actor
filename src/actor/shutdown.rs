@@ -45,23 +45,23 @@ impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Future for ShutdownFut<'a, E
 /// Stream returned when shutting down a [ChildPool].
 ///
 /// This stream can be collected into a vec with [StreamExt::collect]:
-pub struct ShutdownPoolFut<'a, E: Send + 'static, C: DynChannel + ?Sized> {
+pub struct ShutdownStream<'a, E: Send + 'static, C: DynChannel + ?Sized> {
     pool: &'a mut ChildPool<E, C>,
     sleep: Option<Pin<Box<Sleep>>>,
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownPoolFut<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> ShutdownStream<'a, E, C> {
     pub(crate) fn new(pool: &'a mut ChildPool<E, C>, timeout: Duration) -> Self {
         pool.halt();
 
-        ShutdownPoolFut {
+        ShutdownStream {
             pool,
             sleep: Some(Box::pin(tokio::time::sleep(timeout))),
         }
     }
 }
 
-impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownPoolFut<'a, E, C> {
+impl<'a, E: Send + 'static, C: DynChannel + ?Sized> Stream for ShutdownStream<'a, E, C> {
     type Item = Result<E, ExitError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {

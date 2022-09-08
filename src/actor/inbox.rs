@@ -78,3 +78,10 @@ impl<M> Drop for Inbox<M> {
         self.channel.remove_inbox();
     }
 }
+
+#[cfg(feature = "internals")]
+impl<M> Inbox<M> {
+    pub fn channel_ref(&self) -> &Channel<M> {
+        &self.channel
+    }
+}

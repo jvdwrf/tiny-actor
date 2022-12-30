@@ -86,13 +86,13 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_success() {
-        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn_process(Config::default(), basic_actor!());
         assert!(child.shutdown(Duration::from_millis(5)).await.is_ok());
     }
 
     #[tokio::test]
     async fn shutdown_failure() {
-        let (mut child, _addr) = spawn(Config::default(), |_inbox: Inbox<()>| async {
+        let (mut child, _addr) = spawn_process(Config::default(), |_inbox: Inbox<()>| async {
             pending::<()>().await;
         });
         assert!(matches!(
@@ -103,7 +103,7 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_pool_success() {
-        let (mut child, _addr) = spawn_many(0..3, Config::default(), pooled_basic_actor!());
+        let (mut child, _addr) = spawn_many_processes(0..3, Config::default(), pooled_basic_actor!());
 
         let results = child
             .shutdown(Duration::from_millis(5))
@@ -119,7 +119,7 @@ mod test {
     #[tokio::test]
     async fn shutdown_pool_failure() {
         let (mut child, _addr) =
-            spawn_many(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
+            spawn_many_processes(0..3, Config::default(), |_, _inbox: Inbox<()>| async {
                 pending::<()>().await;
             });
 
@@ -136,7 +136,7 @@ mod test {
 
     #[tokio::test]
     async fn shutdown_pool_mixed() {
-        let (mut child, _addr) = spawn_one(Config::default(), |_inbox: Inbox<()>| async move {
+        let (mut child, _addr) = spawn_one_process(Config::default(), |_inbox: Inbox<()>| async move {
             pending::<()>().await;
             unreachable!()
         });

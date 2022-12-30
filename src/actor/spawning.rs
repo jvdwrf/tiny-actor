@@ -18,7 +18,7 @@ use std::sync::Arc;
 ///     });
 ///# }
 /// ```
-pub fn spawn<M, E, Fun, Fut>(
+pub fn spawn_process<M, E, Fun, Fut>(
     config: Config,
     fun: Fun,
 ) -> (Child<E, Channel<M>>, Address<Channel<M>>)
@@ -39,6 +39,19 @@ where
     (child, address)
 }
 
+pub fn spawn_task<E, Fun, Fut>(config: Config, fun: Fun) -> Child<E>
+where
+    Fun: FnOnce(HaltNotifier) -> Fut + Send + 'static,
+    Fut: Future<Output = E> + Send + 'static,
+    E: Send + 'static,
+{
+    spawn_process(config, |inbox| async move {
+        fun(HaltNotifier::new(inbox)).await
+    })
+    .0
+    .into_dyn()
+}
+
 /// Spawn a new actor with a single process, this returns a [Child] and an [Address].
 ///
 /// This is the same as [spawn], but returns a [ChildPool] instead of a [Child].
@@ -57,7 +70,7 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_one<M, E, Fun, Fut>(
+pub fn spawn_one_process<M, E, Fun, Fut>(
     config: Config,
     fun: Fun,
 ) -> (ChildPool<E, Channel<M>>, Address<Channel<M>>)
@@ -78,6 +91,19 @@ where
     (child, address)
 }
 
+pub fn spawn_one_task<E, Fun, Fut>(config: Config, fun: Fun) -> ChildPool<E>
+where
+    Fun: FnOnce(HaltNotifier) -> Fut + Send + 'static,
+    Fut: Future<Output = E> + Send + 'static,
+    E: Send + 'static,
+{
+    spawn_one_process(config, |inbox| async move {
+        fun(HaltNotifier::new(inbox)).await
+    })
+    .0
+    .into_dyn()
+}
+
 /// Spawn a new actor with a multiple process, this returns a [ChildPool] and an [Address].
 ///
 /// The iterator will be passed along as the first argument to every spawned function.
@@ -96,7 +122,7 @@ where
 ///     });
 ///# }
 /// ```
-pub fn spawn_many<M, E, I, Fun, Fut>(
+pub fn spawn_many_processes<M, E, I, Fun, Fut>(
     iter: impl IntoIterator<Item = I>,
     config: Config,
     fun: Fun,
@@ -125,4 +151,22 @@ where
     let child = ChildPool::new(channel, handles, config.link);
 
     (child, address)
+}
+
+pub fn spawn_many_tasks<E, I, Fun, Fut>(
+    iter: impl IntoIterator<Item = I>,
+    config: Config,
+    fun: Fun,
+) -> ChildPool<E>
+where
+    Fun: FnOnce(I, HaltNotifier) -> Fut + Clone + Send + 'static,
+    Fut: Future<Output = E> + Send + 'static,
+    E: Send + 'static,
+    I: Send + 'static,
+{
+    spawn_many_processes(iter, config, |i, inbox| async move {
+        fun(i, HaltNotifier::new(inbox)).await
+    })
+    .0
+    .into_dyn()
 }

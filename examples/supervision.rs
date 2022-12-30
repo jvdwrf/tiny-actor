@@ -70,7 +70,7 @@ fn spawn_actor() -> (
     Child<RecvError, Channel<Message>>,
     Address<Channel<Message>>,
 ) {
-    spawn(Config::default(), |mut inbox| async move {
+    spawn_process(Config::default(), |mut inbox| async move {
         loop {
             match inbox.recv().await {
                 Ok(msg) => println!("Actor -- received message {:?}", msg),

@@ -12,6 +12,7 @@ use std::{
 mod channel_trait;
 mod receiving;
 mod sending;
+mod task_channel;
 pub use {channel_trait::*, receiving::*, sending::*};
 
 /// Contains all data that should be shared between Addresses, Inboxes and the Child.
@@ -366,7 +367,7 @@ mod test {
     #[tokio::test]
     async fn immedeate_halt() {
         for i in 0..100 {
-            let (_child, address) = spawn(Config::default(), basic_actor!());
+            let (_child, address) = spawn_process(Config::default(), basic_actor!());
             spin_sleep::sleep(Duration::from_nanos(i));
             address.halt();
             address.await;

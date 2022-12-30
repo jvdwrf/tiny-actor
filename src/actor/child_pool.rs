@@ -294,7 +294,7 @@ mod test {
     #[tokio::test]
     async fn dropping() {
         static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
-        let (child, addr) = spawn_many(
+        let (child, addr) = spawn_many_processes(
             0..3,
             Config::default(),
             |_, mut inbox: Inbox<()>| async move {
@@ -312,7 +312,7 @@ mod test {
     #[tokio::test]
     async fn dropping_halts_then_aborts() {
         static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
-        let (child, addr) = spawn_many(
+        let (child, addr) = spawn_many_processes(
             0..3,
             Config::attached(Duration::from_millis(1)),
             |_, mut inbox: Inbox<()>| async move {
@@ -332,7 +332,7 @@ mod test {
     async fn dropping_detached() {
         static HALT_COUNT: AtomicU8 = AtomicU8::new(0);
 
-        let (child, addr) = spawn_many(
+        let (child, addr) = spawn_many_processes(
             0..3,
             Config::detached(),
             |_, mut inbox: Inbox<()>| async move {
@@ -353,20 +353,20 @@ mod test {
 
     #[tokio::test]
     async fn downcast() {
-        let (pool, _addr) = spawn_many(0..5, Config::default(), pooled_basic_actor!());
+        let (pool, _addr) = spawn_many_processes(0..5, Config::default(), pooled_basic_actor!());
         assert!(matches!(pool.into_dyn().downcast::<()>(), Ok(_)));
     }
 
     #[tokio::test]
     async fn spawn_ok() {
-        let (mut child, _addr) = spawn_one(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn_one_process(Config::default(), basic_actor!());
         assert!(child.spawn(basic_actor!()).is_ok());
         assert!(child.into_dyn().try_spawn(basic_actor!()).is_ok());
     }
 
     #[tokio::test]
     async fn spawn_err_exit() {
-        let (mut child, addr) = spawn_one(Config::default(), basic_actor!());
+        let (mut child, addr) = spawn_one_process(Config::default(), basic_actor!());
         addr.halt();
         addr.await;
         assert!(matches!(child.spawn(basic_actor!()), Err(SpawnError(_))));
@@ -378,7 +378,7 @@ mod test {
 
     #[tokio::test]
     async fn spawn_err_incorrect_type() {
-        let (child, _addr) = spawn_one(Config::default(), basic_actor!(u32));
+        let (child, _addr) = spawn_one_process(Config::default(), basic_actor!(u32));
         assert!(matches!(
             child.into_dyn().try_spawn(basic_actor!(u64)),
             Err(TrySpawnError::IncorrectType(_))

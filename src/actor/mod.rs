@@ -9,6 +9,7 @@ mod child_pool;
 mod inbox;
 mod spawning;
 mod shutdown;
+mod halt_notifier;
 
 pub use address::*;
 pub use child::*;
@@ -16,3 +17,4 @@ pub use child_pool::*;
 pub use inbox::*;
 pub use spawning::*;
 pub use shutdown::*;
+pub use halt_notifier::*;

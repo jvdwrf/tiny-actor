@@ -40,6 +40,8 @@ where
         }
     }
 
+    
+
     fn into_parts(self) -> (Arc<C>, JoinHandle<E>, Link, bool) {
         let no_drop = ManuallyDrop::new(self);
         unsafe {
@@ -209,7 +211,7 @@ mod test {
     #[tokio::test]
     async fn dropping() {
         let (tx, rx) = oneshot::channel();
-        let (child, _addr) = spawn(Config::default(), |mut inbox: Inbox<()>| async move {
+        let (child, _addr) = spawn_process(Config::default(), |mut inbox: Inbox<()>| async move {
             if let Err(RecvError::Halted) = inbox.recv().await {
                 tx.send(true).unwrap();
             } else {
@@ -223,7 +225,7 @@ mod test {
     #[tokio::test]
     async fn dropping_aborts() {
         let (tx, rx) = oneshot::channel();
-        let (child, _addr) = spawn(
+        let (child, _addr) = spawn_process(
             Config::attached(Duration::from_millis(1)),
             |mut inbox: Inbox<()>| async move {
                 if let Err(RecvError::Halted) = inbox.recv().await {
@@ -241,7 +243,7 @@ mod test {
     #[tokio::test]
     async fn dropping_detached() {
         let (tx, rx) = oneshot::channel();
-        let (child, addr) = spawn(Config::detached(), |mut inbox: Inbox<()>| async move {
+        let (child, addr) = spawn_process(Config::detached(), |mut inbox: Inbox<()>| async move {
             if let Err(RecvError::Halted) = inbox.recv().await {
                 tx.send(true).unwrap();
             } else {
@@ -256,13 +258,13 @@ mod test {
 
     #[tokio::test]
     async fn downcast() {
-        let (child, _addr) = spawn(Config::default(), basic_actor!());
+        let (child, _addr) = spawn_process(Config::default(), basic_actor!());
         assert!(matches!(child.into_dyn().downcast::<()>(), Ok(_)));
     }
 
     #[tokio::test]
     async fn abort() {
-        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn_process(Config::default(), basic_actor!());
         assert!(!child.is_aborted());
         child.abort();
         assert!(child.is_aborted());
@@ -271,7 +273,7 @@ mod test {
 
     #[tokio::test]
     async fn is_finished() {
-        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn_process(Config::default(), basic_actor!());
         child.abort();
         let _ = (&mut child).await;
         assert!(child.is_finished());
@@ -279,13 +281,13 @@ mod test {
 
     #[tokio::test]
     async fn into_childpool() {
-        let (child, _addr) = spawn(Config::default(), basic_actor!());
+        let (child, _addr) = spawn_process(Config::default(), basic_actor!());
         let pool = child.into_pool();
         assert_eq!(pool.task_count(), 1);
         assert_eq!(pool.process_count(), 1);
         assert_eq!(pool.is_aborted(), false);
 
-        let (mut child, _addr) = spawn(Config::default(), basic_actor!());
+        let (mut child, _addr) = spawn_process(Config::default(), basic_actor!());
         child.abort();
         let pool = child.into_pool();
         assert_eq!(pool.is_aborted(), true);

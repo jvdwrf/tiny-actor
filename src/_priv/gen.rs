@@ -134,6 +134,13 @@ macro_rules! child_methods {
         pub fn link(&self) -> &Link {
             &self.link
         }
+
+        pub fn config(&self) -> Config {
+            Config {
+                link: self.link().clone(),
+                capacity: self.capacity().clone(),
+            }
+        }
     };
 }
 pub(crate) use child_methods;
